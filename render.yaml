@@ -1,0 +1,19 @@
+# Render blueprint for the Flask API. Secrets (sync: false) are entered in the Render dashboard.
+services:
+  - type: web
+    name: ai-support-desk-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --timeout 60
+    healthCheckPath: /api/health
+    envVars:
+      - key: gemini_key
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        value: ticketing-sys-d181e
+      - key: FRONTEND_ORIGINS
+        value: https://ticketing-sys-d181e.web.app,https://ticketing-sys-d181e.firebaseapp.com
