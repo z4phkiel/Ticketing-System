@@ -26,7 +26,7 @@ def _origins(project_id):
 class Settings:
     ai_provider: str = "openai_compatible"
     ai_api_key: str = ""
-    ai_model: str = "gemini-3.5-flash,gemini-flash-latest"  # comma-separated: primary, then fallbacks
+    ai_model: str = "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite"  # comma-separated: primary, then fallbacks
     ai_reasoning_effort: str = "low"
     ai_base_url: str = GEMINI_BASE_URL
     ai_timeout: float = 20.0
@@ -50,7 +50,7 @@ class Settings:
             ai_provider=os.getenv("AI_PROVIDER", "openai_compatible"),
             # gemini_key is the project's key name; AI_API_KEY wins if set
             ai_api_key=os.getenv("AI_API_KEY") or os.getenv("gemini_key", ""),
-            ai_model=os.getenv("AI_MODEL", "gemini-3.5-flash,gemini-flash-latest"),
+            ai_model=os.getenv("AI_MODEL", "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite"),
             ai_base_url=os.getenv("AI_BASE_URL", GEMINI_BASE_URL).rstrip("/"),
             # Limits hidden "thinking" tokens on Gemini; set empty for providers that reject it
             ai_reasoning_effort=os.getenv("AI_REASONING_EFFORT", "low"),

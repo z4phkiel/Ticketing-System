@@ -119,7 +119,7 @@ def test_ai_failure_falls_back(env):
     stored = env["repo"].get_ticket(res.json["ticket"]["id"])
     assert stored["status"] == "open" and stored["priority"] == 3 and stored["category"] == "general"
     assert stored["ai"]["error"] == "timeout"
-    assert len(env["fake"].calls) == 2  # retried once
+    assert len(env["fake"].calls) == len(env["settings"].ai_model.split(","))  # each model tried once
 
 
 def test_duplicate_linked_without_revealing_original(env):
@@ -397,3 +397,19 @@ def test_no_images_on_closed_ticket(env):
     env["call"]("patch", f"/api/admin/tickets/{tid}", "a1", {"status": "closed"})
     res = env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "", "image": image()})
     assert res.status_code == 409
+
+
+def test_overloaded_model_falls_through_to_next(monkeypatch):
+    import ai_service
+    monkeypatch.setattr(ai_service, "OVERLOAD_PAUSE_SECONDS", 0)
+    tried = []
+
+    def call(settings, model, system, user):
+        tried.append(model)
+        if model != "c":
+            res = ai_service.requests.Response(); res.status_code = 503
+            raise ai_service.requests.HTTPError("503 Server Error", response=res)
+        return ai_reply()
+
+    result = AIService(Settings(ai_api_key="k", ai_model="a,b,c"), call=call).analyze_ticket("s", "body text", [])
+    assert tried == ["a", "b", "c"] and result["model"] == "c"

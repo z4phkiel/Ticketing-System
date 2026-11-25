@@ -8,6 +8,8 @@ import requests
 CATEGORIES = ("billing", "technical", "account", "general", "other")
 KB_PATH = Path(__file__).resolve().parent / "knowledge_base.md"
 MAX_TOKENS = 2048
+MAX_TOTAL_SECONDS = 30       # stop trying more models after this long
+OVERLOAD_PAUSE_SECONDS = 1.0  # wait after a 'busy' reply before the next model
 
 SYSTEM_PROMPT = """You are the triage assistant for an IT help desk that handles computer problems:
 hardware, software, networks, printers, email, and user accounts.
@@ -144,14 +146,21 @@ class AIService:
         user = build_user_message(subject, body, candidates)
         ids = {t["id"] for t, _ in candidates}
         models = [m.strip() for m in self.s.ai_model.split(",") if m.strip()]
-        started, last_error = time.monotonic(), None
-        for model in (models * 2)[:max(2, len(models))]:  # one retry, moving to the fallback model if any
+        started, last_error, result = time.monotonic(), None, None
+        # Each model in AI_MODEL gets one try (at least two tries in total), stopping once the
+        # time budget is used up so a user isn't left waiting while the provider is struggling.
+        for attempt, model in enumerate((models * 2)[:max(2, len(models))]):
+            if attempt and time.monotonic() - started > MAX_TOTAL_SECONDS:
+                break
             try:
                 result = parse_result(self.call(self.s, model, self.system, user), ids)
                 break
             except (AIError, requests.RequestException, KeyError, IndexError, ValueError) as exc:
                 last_error = exc
-        else:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status in (429, 500, 502, 503):  # overloaded: brief pause before the next model
+                    time.sleep(OVERLOAD_PAUSE_SECONDS)
+        if result is None:
             raise AIError(str(last_error)[:300])
         result.update(provider=self.s.ai_provider, model=model,
                       latency_ms=int((time.monotonic() - started) * 1000))
