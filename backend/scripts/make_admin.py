@@ -28,7 +28,8 @@ def main():
     if not user:
         return print(f"No profile for {email}. Sign in to the app once with this email, then run this again.")
     repo.update_user(user["uid"], {"role": "admin"})
-    repo.add_audit({"action": "role_change", "user_id": user["uid"], "by": "make_admin.py",
+    repo.add_audit({"action": "role_change", "user_id": user["uid"], "user_name": user.get("name"),
+                    "by": "make_admin.py", "by_name": "Setup script",
                     "before": user.get("role"), "after": "admin", "at": now_iso()})
     print(f"{email} is now an admin. Reload the app to open the staff console.")
 

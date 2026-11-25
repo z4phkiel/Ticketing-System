@@ -413,3 +413,40 @@ def test_overloaded_model_falls_through_to_next(monkeypatch):
 
     result = AIService(Settings(ai_api_key="k", ai_model="a,b,c"), call=call).analyze_ticket("s", "body text", [])
     assert tried == ["a", "b", "c"] and result["model"] == "c"
+
+
+# live lists and the activity log
+
+def test_live_queue_returns_only_changes(env):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    first = submit(env).json["ticket"]
+    cursor = env["repo"].get_ticket(first["id"])["updated_at"]
+    import time as _t
+    _t.sleep(0.02)
+    second = submit(env, "u2", "Mouse not working", "My wireless mouse stopped working today.").json["ticket"]
+    changed = env["call"]("get", f"/api/admin/tickets?since={cursor}", "a1").json["tickets"]
+    assert second["id"] in [t["id"] for t in changed]
+    assert env["call"]("get", f"/api/admin/tickets?since={cursor}", "u1").status_code == 403
+    mine = env["call"]("get", f"/api/tickets?since={cursor}", "u1").json["tickets"]
+    assert all(t["id"] != second["id"] for t in mine)  # users only ever see their own tickets
+
+
+def test_activity_log_names_who_did_what(env):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    tid = submit(env).json["ticket"]["id"]
+    env["call"]("patch", f"/api/admin/tickets/{tid}", "a1", {"status": "in_progress", "priority": 5})
+    env["call"]("patch", "/api/admin/users/u2", "a1", {"role": "admin"})  # u2 has no profile yet -> 404, not logged
+    env["call"]("get", "/api/me", "u2")
+    env["call"]("patch", "/api/admin/users/u2", "a1", {"role": "admin"})
+    log = env["call"]("get", "/api/admin/activity", "a1").json
+    actions = [(e["action"], e["by_name"]) for e in log["entries"]]
+    assert actions[:3] == [("role_change", "a1"), ("ticket_update", "a1"), ("ticket_created", "u1")]
+    update = log["entries"][1]
+    assert update["ticket_subject"] == "Payment card update"
+    assert update["before"]["status"] == "open" and update["after"]["status"] == "in_progress"
+    assert log["entries"][0]["user_name"] == "u2"
+    newest = log["entries"][0]["at"]
+    assert env["call"]("get", f"/api/admin/activity?after={newest}", "a1").json["entries"] == []
+    older = env["call"]("get", f"/api/admin/activity?before={newest}&limit=1", "a1").json
+    assert len(older["entries"]) == 1 and older["more"] is True
+    assert env["call"]("get", "/api/admin/activity", "u1").status_code == 403

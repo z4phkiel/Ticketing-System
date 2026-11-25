@@ -10,7 +10,7 @@ import service
 from ai_service import AIService
 from auth import firebase_verifier, forget_user, role_required
 from config import Settings
-from repo import make_repo
+from repo import make_repo, now_iso
 
 
 def create_app(settings=None, repo=None, ai=None, verify_token=None):
@@ -128,8 +128,13 @@ def register_routes(app):
     @app.get("/api/tickets")
     @role_required("user")
     def my_tickets():
-        items = sorted(_repo().tickets_for_user(g.user["uid"]), key=lambda t: t["created_at"], reverse=True)
-        return {"tickets": [service.user_view(t) for t in items]}
+        """All of my tickets, or with ?since= only those changed since then (live list)."""
+        now = now_iso()  # the next ?since= cursor; server time, so a wrong device clock can't skip updates
+        since = service.overlap_since(request.args.get("since"))
+        items = (_repo().user_tickets_changed_since(g.user["uid"], since) if since
+                 else _repo().tickets_for_user(g.user["uid"]))
+        items.sort(key=lambda t: t["created_at"], reverse=True)
+        return {"tickets": [service.user_view(t) for t in items], "now": now}
 
     @app.get("/api/tickets/<tid>")
     @role_required("user", "admin")
@@ -195,18 +200,33 @@ def register_routes(app):
     @app.get("/api/admin/tickets")
     @role_required("admin")
     def admin_tickets():
-        items = _repo().recent_tickets(500)
+        """The queue, or with ?since= only tickets changed since then (live queue, few reads)."""
+        now = now_iso()  # next ?since= cursor (server time)
+        since = service.overlap_since(request.args.get("since"))
+        items = _repo().tickets_changed_since(since) if since else _repo().recent_tickets(500)
         for key in ("status", "category", "queue"):
             value = request.args.get(key)
             if value:
                 items = [t for t in items if t.get(key) == value]
-        return {"tickets": service.urgency_sorted(items)}
+        return {"tickets": service.urgency_sorted(items), "now": now}
 
     @app.patch("/api/admin/tickets/<tid>")
     @role_required("admin")
     def admin_update(tid):
         t = service.admin_update(_repo(), g.user, tid, _json())
         return {"ticket": t, "messages": _messages(tid)}
+
+    @app.get("/api/admin/activity")
+    @role_required("admin")
+    def admin_activity():
+        """Activity log, newest first. ?before= pages back in time; ?after= returns only newer entries."""
+        try:
+            limit = max(1, min(int(request.args.get("limit", 50)), 100))
+        except ValueError:
+            limit = 50
+        cursor = lambda k: (request.args.get(k) or "").strip().replace(" ", "+") or None  # noqa: E731 ("+" may arrive as a space)
+        items = _repo().list_audit(cursor("before"), cursor("after"), limit)
+        return {"entries": items, "more": len(items) == limit}
 
     @app.get("/api/admin/users")
     @role_required("admin")

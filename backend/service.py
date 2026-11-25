@@ -117,6 +117,16 @@ def urgency_sorted(tickets):
     return sorted(tickets, key=lambda t: (-t.get("priority", 3), t.get("created_at", "")))
 
 
+def audit(repo, action, actor, **fields):
+    """Activity log entry. actor is the signed-in user, or a label such as "system".
+    The username is stored with the entry so the log reads well even if names change later."""
+    if isinstance(actor, dict):
+        by, by_name = actor["uid"], display_name(actor)
+    else:
+        by, by_name = actor, actor.capitalize()
+    repo.add_audit({"action": action, "by": by, "by_name": by_name, "at": now_iso(), **fields})
+
+
 def display_name(user):
     """Username shown in the UI; emails are never displayed."""
     return (user.get("name") or user.get("email", "").split("@")[0] or "user")[:40]
@@ -201,6 +211,8 @@ def submit_ticket(repo, ai_service, settings, user, subject, body):
         fields["status"] = "open"
         repo.add_message(tid, message("system", None, MSG_ESCALATED.format(queue=fields["queue"])))
     repo.update_ticket(tid, fields)
+    audit(repo, "ticket_created", user, ticket_id=tid, ticket_subject=subject, status=fields["status"],
+          category=fields["category"], priority=fields["priority"], ai_error=bool(ai.get("error")))
     return repo.get_ticket(tid)
 
 
@@ -220,7 +232,7 @@ def reopen_ticket(repo, user, tid):
         raise ServiceError("Only tickets answered by the AI can be reopened.", 409)
     repo.update_ticket(tid, {"status": "open", "priority": min(5, t["priority"] + 1), "updated_at": now_iso()})
     repo.add_message(tid, message("system", None, MSG_REOPENED))
-    repo.add_audit({"action": "reopen", "ticket_id": tid, "by": user["uid"], "at": now_iso()})
+    audit(repo, "reopen", user, ticket_id=tid, ticket_subject=t["subject"])
     return repo.get_ticket(tid)
 
 
@@ -307,13 +319,14 @@ def purge_closed_images(repo, now=None):
             repo.delete_attachment(aid)
             removed += 1
         repo.update_ticket(t["id"], {"images_deleted": True, "purge_after": None, "updated_at": now_iso()})
+        audit(repo, "images_deleted", "system", ticket_id=t["id"], ticket_subject=t.get("subject"))
     return removed
 
 
 def delete_message(repo, user, tid, mid, scope):
     """scope 'me' hides the message for this person only; 'everyone' erases its text and image for all.
     Everyone-deletes are allowed for your own messages, and for staff on any message."""
-    get_visible_ticket(repo, user, tid)
+    t = get_visible_ticket(repo, user, tid)
     m = repo.get_message(tid, mid)
     if not m or user["uid"] in (m.get("hidden_for") or []):
         raise ServiceError("Message not found.", 404)
@@ -331,8 +344,8 @@ def delete_message(repo, user, tid, mid, scope):
     ts = now_iso()
     repo.update_message(tid, mid, {"body": "", "attachment": None, "deleted": True, "deleted_by": user["uid"],
                                    "deleted_at": ts, "updated_at": ts})
-    repo.add_audit({"action": "message_delete", "ticket_id": tid, "message_id": mid, "by": user["uid"],
-                    "author": m.get("author_id"), "at": ts})
+    audit(repo, "message_delete", user, ticket_id=tid, ticket_subject=t["subject"], message_id=mid,
+          author=m.get("author_id"), author_name=m.get("author_name"))
     return repo.get_message(tid, mid)
 
 
@@ -385,8 +398,8 @@ def admin_update(repo, admin, tid, changes):
     fields["updated_at"] = now_iso()
     repo.update_ticket(tid, fields)
     changed = {k: v for k, v in fields.items() if k not in ("ai", "updated_at")}
-    repo.add_audit({"action": "ticket_update", "ticket_id": tid, "by": admin["uid"],
-                    "before": {k: t.get(k) for k in changed}, "after": changed, "at": now_iso()})
+    audit(repo, "ticket_update", admin, ticket_id=tid, ticket_subject=t["subject"],
+          before={k: t.get(k) for k in changed}, after=changed)
     return repo.get_ticket(tid)
 
 
@@ -400,6 +413,6 @@ def set_role(repo, admin, uid, role):
         raise ServiceError("You can't remove your own admin role.", 409)
     if target.get("role") != role:
         repo.update_user(uid, {"role": role})
-        repo.add_audit({"action": "role_change", "user_id": uid, "by": admin["uid"],
-                        "before": target.get("role"), "after": role, "at": now_iso()})
+        audit(repo, "role_change", admin, user_id=uid, user_name=display_name(target),
+              before=target.get("role"), after=role)
     return {**target, "role": role}

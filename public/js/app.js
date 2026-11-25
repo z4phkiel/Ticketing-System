@@ -592,6 +592,69 @@ export function attachControls(textarea, form) {
   return { button, input, preview, get: () => current, clear };
 }
 
+// ---------- Live lists and notifications ----------
+
+/**
+ * Runs task() repeatedly: every `visible` ms while the tab is shown, every `hidden` ms in the
+ * background, and right away when the tab comes back. Errors are ignored (next run retries).
+ */
+export function poller(task, { visible, hidden }) {
+  let timer = null, stopped = false, running = false;
+  const schedule = () => { clearTimeout(timer); if (!stopped) timer = setTimeout(run, document.hidden ? hidden : visible); };
+  async function run() {
+    if (stopped || running) return;
+    running = true;
+    try { if (navigator.onLine) await task(); } catch (err) { console.warn("Live update failed, retrying:", err); } finally { running = false; }
+    schedule();
+  }
+  const onVisible = () => { if (!document.hidden) { clearTimeout(timer); run(); } };
+  document.addEventListener("visibilitychange", onVisible);
+  schedule();
+  return { stop() { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); } };
+}
+
+/** "(3) Support queue" in the tab title while the page is in the background; cleared when it's viewed. */
+const baseTitle = document.title;
+let unseen = 0;
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { unseen = 0; document.title = baseTitle; } });
+function bumpTitle() {
+  if (!document.hidden) return;
+  unseen += 1;
+  document.title = `(${unseen}) ${baseTitle}`;
+}
+
+/** Clickable notification at the top centre. Stays 10 s (paused while hovered or focused). */
+export function notify({ title, body, meta, iconName = "inbox", onClick }) {
+  let stack = $(".notify-stack");
+  if (!stack) document.body.append(stack = h("div", { class: "notify-stack", role: "region", "aria-label": "Notifications", "aria-live": "polite" }));
+  const close = h("button", { class: "notify-close", type: "button", "aria-label": "Dismiss notification" }, icon("x", "icon icon-sm"));
+  const card = h("div", { class: "notify" },
+    h("button", { class: "notify-main", type: "button" },
+      h("span", { class: "notify-icon", "aria-hidden": "true" }, icon(iconName)),
+      h("span", { class: "notify-text" },
+        h("strong", {}, title),
+        body ? h("span", { class: "notify-body" }, body) : null,
+        meta ? h("span", { class: "notify-meta" }, meta) : null)),
+    close);
+  let timer = null;
+  const dismiss = () => {
+    clearTimeout(timer);
+    card.classList.add("leaving");
+    setTimeout(() => card.remove(), 300);
+  };
+  const arm = () => { clearTimeout(timer); timer = setTimeout(dismiss, 10000); };
+  card.querySelector(".notify-main").addEventListener("click", () => { dismiss(); onClick?.(); });
+  close.addEventListener("click", dismiss);
+  card.addEventListener("mouseenter", () => clearTimeout(timer));
+  card.addEventListener("mouseleave", arm);
+  card.addEventListener("focusin", () => clearTimeout(timer));
+  card.addEventListener("focusout", arm);
+  stack.prepend(card);
+  while (stack.children.length > 4) stack.lastElementChild.remove();
+  arm();
+  bumpTitle();
+}
+
 /** Enter adds a new line as usual; Ctrl+Enter (Cmd+Enter on Mac) sends. */
 export function ctrlEnterToSend(textarea) {
   textarea.addEventListener("keydown", e => {

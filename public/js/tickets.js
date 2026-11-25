@@ -3,7 +3,7 @@ import {
   $, api, appendMessages, attachControls, busy, categoryChip, counter, displayName, ctrlEnterToSend, emptyState, fullTime, guard, h,
   deleteMessage, followBottom, icon, imageTimerNotice, imagesGone, initShell, lastUpdate, liveTicket, mergeMessages,
   replaceMessages, syncMessages, rememberSentImage, renderThread, renderTyping, setupDrawer, setupHeader, shortId, stagger,
-  statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
+  poller, statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
 const list = $("#ticket-list");
@@ -17,7 +17,7 @@ const STEPS = ["Reading your ticket…", "Working out the category…", "Checkin
 
 function ticketRow(t) {
   return h("li", {},
-    h("button", { class: "ticket-item", type: "button", onclick: () => openTicket(t.id) },
+    h("button", { class: "ticket-item", type: "button", "data-id": t.id, onclick: () => openTicket(t.id) },
       h("div", { class: "row" }, h("span", { class: "subject" }, t.subject), statusBadge(t.status)),
       h("p", { class: "preview" }, t.body),
       h("div", { class: "meta" }, categoryChip(t.category),
@@ -36,17 +36,48 @@ function renderList(animate = true) {
   stagger(list);
 }
 
+let listCursor = null; // server time of the last check
+let listLive = null;
+
 async function loadTickets() {
   list.setAttribute("aria-busy", "true");
   try {
-    tickets = (await api("/api/tickets")).tickets;
+    const data = await api("/api/tickets");
+    tickets = data.tickets;
+    listCursor = data.now;
     renderList();
+    startListLive();
   } catch (err) {
     list.setAttribute("aria-busy", "false");
     list.replaceChildren(err.status === 0
       ? emptyState("wifi-off", "You're offline", "Connect to see your tickets.")
       : emptyState("inbox", "Couldn't load your tickets", err.message));
   }
+}
+
+/** Live list: every 15 s (60 s in a background tab) fetch only my tickets that changed. */
+function startListLive() {
+  listLive?.stop();
+  listLive = poller(async () => {
+    if (!listCursor) return;
+    const data = await api(`/api/tickets?since=${encodeURIComponent(listCursor)}`, { wakeHintAfter: 60000 });
+    listCursor = data.now;
+    const changedStatus = [];
+    let dirty = false;
+    for (const t of data.tickets) {
+      const i = tickets.findIndex(x => x.id === t.id);
+      if (i === -1) { tickets.unshift(t); dirty = true; }
+      else if (tickets[i].updated_at !== t.updated_at) {
+        if (tickets[i].status !== t.status) changedStatus.push(t.id);
+        tickets[i] = t;
+        dirty = true;
+      }
+    }
+    if (!dirty) return;
+    tickets.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    renderList(false);
+    for (const id of changedStatus) list.querySelector(`.ticket-item[data-id="${CSS.escape(id)}"] .badge`)?.classList.add("pop");
+  }, { visible: 15000, hidden: 60000 });
 }
 
 function upsert(ticket) {

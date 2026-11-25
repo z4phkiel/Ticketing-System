@@ -61,6 +61,13 @@ class MemoryRepo:
         items = sorted(self.tickets.values(), key=lambda t: t["created_at"], reverse=True)
         return copy.deepcopy(items[:limit])
 
+    def tickets_changed_since(self, since, limit=200):
+        items = sorted((t for t in self.tickets.values() if t["updated_at"] > since), key=lambda t: t["updated_at"])
+        return copy.deepcopy(items[:limit])
+
+    def user_tickets_changed_since(self, uid, since):
+        return copy.deepcopy([t for t in self.tickets.values() if t["user_id"] == uid and t["updated_at"] > since])
+
     # messages and audit
     def add_message(self, tid, data):
         self.messages[tid].append({**data, "id": f"m{len(self.messages[tid]) + 1}"})
@@ -81,7 +88,11 @@ class MemoryRepo:
             m["hidden_for"].append(uid)
 
     def add_audit(self, data):
-        self.audit.append(data)
+        self.audit.append({**data, "id": f"e{len(self.audit) + 1}"})
+
+    def list_audit(self, before=None, after=None, limit=50):
+        items = [e for e in self.audit if (not before or e["at"] < before) and (not after or e["at"] > after)]
+        return copy.deepcopy(sorted(items, key=lambda e: e["at"], reverse=True)[:limit])
 
     # image attachments
     def add_attachment(self, data):
@@ -171,6 +182,23 @@ class FirestoreRepo:
         q = self.db.collection("tickets").order_by("created_at", direction="DESCENDING").limit(limit)
         return [self._doc(s) for s in q.stream()]
 
+    def tickets_changed_since(self, since, limit=200):
+        """Live queue: only tickets updated after 'since' are read (usually none or a few)."""
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        q = (self.db.collection("tickets").where(filter=FieldFilter("updated_at", ">", since))
+             .order_by("updated_at").limit(limit))
+        return [self._doc(s) for s in q.stream()]
+
+    def user_tickets_changed_since(self, uid, since):
+        """Live list for one user. Uses the (user_id, updated_at) index from firestore.indexes.json;
+        until that index is deployed, falls back to reading the user's tickets."""
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        try:
+            q = self._where("tickets", "user_id", uid).where(filter=FieldFilter("updated_at", ">", since))
+            return [self._doc(s) for s in q.stream()]
+        except Exception:  # FailedPrecondition: index not built yet
+            return [t for t in self.tickets_for_user(uid) if t.get("updated_at", "") > since]
+
     # messages and audit
     def add_message(self, tid, data):
         self.db.collection("tickets").document(tid).collection("messages").add(data)
@@ -200,6 +228,16 @@ class FirestoreRepo:
 
     def add_audit(self, data):
         self.db.collection("audit_log").add(data)
+
+    def list_audit(self, before=None, after=None, limit=50):
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        q = self.db.collection("audit_log")
+        if before:
+            q = q.where(filter=FieldFilter("at", "<", before))
+        if after:
+            q = q.where(filter=FieldFilter("at", ">", after))
+        q = q.order_by("at", direction="DESCENDING").limit(limit)
+        return [{**s.to_dict(), "id": s.id} for s in q.stream()]
 
     # image attachments: one document each (bytes field, under Firestore's 1 MiB document limit)
     def add_attachment(self, data):

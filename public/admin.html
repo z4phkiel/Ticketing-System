@@ -38,6 +38,7 @@
       <nav class="seg" aria-label="Admin sections">
         <a href="#queue" id="nav-queue" aria-current="page">Queue</a>
         <a href="#users" id="nav-users">Users</a>
+        <a href="#activity" id="nav-activity">Activity</a>
       </nav>
     </div>
 
@@ -87,6 +88,13 @@
           <tbody id="queue-body"></tbody>
         </table>
       </div>
+    </section>
+
+    <section id="activity-view" aria-label="Activity log" hidden>
+      <div class="card">
+        <ol class="activity" id="activity-list" aria-busy="true"></ol>
+      </div>
+      <div class="load-more"><button class="btn btn-secondary" id="activity-more" type="button" hidden>Load older activity</button></div>
     </section>
 
     <section id="users-view" aria-label="Users" hidden>

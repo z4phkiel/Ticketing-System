@@ -3,7 +3,7 @@ import {
   $, CATEGORY, PRIORITY, STATUS, api, appendMessages, attachControls, busy, categoryChip, ctrlEnterToSend, displayName, fullTime, guard,
   deleteMessage, followBottom, h, icon, imageTimerNotice, imagesGone, initShell, lastUpdate, liveTicket, mergeMessages,
   replaceMessages, syncMessages, priorityBadge, rememberSentImage, renderThread, renderTyping, setupDrawer, setupHeader,
-  shortId, stagger, statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
+  notify, poller, shortId, stagger, statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
 const drawer = $("#drawer");
@@ -35,7 +35,7 @@ function renderStats() {
 }
 
 function queueRow(t) {
-  const tr = h("tr", { tabindex: "0", "aria-label": `${t.subject}, priority ${t.priority}, ${STATUS[t.status]}` },
+  const tr = h("tr", { tabindex: "0", "data-id": t.id, "aria-label": `${t.subject}, priority ${t.priority}, ${STATUS[t.status]}` },
     h("td", {}, priorityBadge(t.priority)),
     h("td", { class: "subj" },
       h("strong", {}, t.subject),
@@ -61,17 +61,66 @@ function renderQueue(animate = true) {
   stagger(tbody);
 }
 
+let queueCursor = null; // server time of the last queue check
+let queueLive = null;
+const announced = new Set(); // tickets already shown in the queue at load, or already notified
+
 async function loadQueue() {
   tbody.replaceChildren(...[0, 1, 2].map(() => h("tr", {}, h("td", { colspan: "6" }, h("div", { class: "skeleton line" })))));
   try {
-    all = (await api("/api/admin/tickets")).tickets;
+    const data = await api("/api/admin/tickets");
+    all = data.tickets;
+    all.forEach(t => announced.add(t.id));
+    queueCursor = data.now;
     renderQueue();
+    startQueueLive();
   } catch (err) {
     tbody.replaceChildren(h("tr", {}, h("td", { colspan: "6" },
       h("div", { class: "empty" }, icon(err.status === 0 ? "wifi-off" : "inbox"),
         h("strong", {}, err.status === 0 ? "You're offline" : "Couldn't load the queue"),
         h("span", {}, err.status === 0 ? "Connect to see tickets." : err.message)))));
   }
+}
+
+/** Live queue: every 8 s (30 s in a background tab) fetch only tickets changed since the last check. */
+function startQueueLive() {
+  queueLive?.stop();
+  queueLive = poller(async () => {
+    if (!queueCursor) return;
+    const data = await api(`/api/admin/tickets?since=${encodeURIComponent(queueCursor)}`, { wakeHintAfter: 60000 });
+    queueCursor = data.now;
+    applyQueueChanges(data.tickets);
+  }, { visible: 8000, hidden: 30000 });
+}
+
+function applyQueueChanges(changed) {
+  let dirty = false;
+  for (const t of changed) {
+    const i = all.findIndex(x => x.id === t.id);
+    if (i === -1) { all.push(t); dirty = true; }
+    else if (all[i].updated_at !== t.updated_at) { all[i] = t; dirty = true; }
+  }
+  if (!dirty) return;
+  all.sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at));
+  renderQueue(false);
+  // Announce each new ticket once, after the AI has sorted it (so priority and category are known)
+  for (const t of changed) {
+    if (announced.has(t.id) || t.status === "pending_ai") continue;
+    announced.add(t.id);
+    tbody.querySelector(`tr[data-id="${CSS.escape(t.id)}"]`)?.classList.add("flash");
+    if (t.user_id !== me.uid) announceTicket(t);
+  }
+}
+
+function announceTicket(t) {
+  const how = t.status === "ai_resolved" ? "answered by AI" : t.duplicate_of ? "possible duplicate" : STATUS[t.status] || t.status;
+  notify({
+    title: `New ticket from ${ownerName(t)}`,
+    body: t.subject,
+    meta: `P${t.priority} ${PRIORITY[t.priority] || ""} · ${CATEGORY[t.category] || t.category} · ${how}`,
+    iconName: "inbox",
+    onClick: () => { if (location.hash === "#users" || location.hash === "#activity") location.hash = "#queue"; openTicket(t.id); },
+  });
 }
 
 function upsert(ticket) {
@@ -343,19 +392,139 @@ function renderUsers() {
 
 // ---------- Views ----------
 
+// ---------- Activity log ----------
+
+const activity = { entries: [], live: null, loaded: false };
+const FIELD = { status: "Status", priority: "Priority", category: "Category", queue: "Queue", assigned_to: "Assignee", duplicate_of: "Duplicate of" };
+const ROLE = { admin: "Support staff", user: "User" };
+
+function actorName(e) {
+  if (e.by_name && e.by_name !== e.by) return e.by_name;
+  if (e.by === "make_admin.py") return "Setup script";
+  if (e.by === "system") return "System";
+  return users.some(u => u.uid === e.by) ? userName(e.by) : e.by_name || "Unknown user";
+}
+
+function fieldValue(key, v) {
+  if (v === null || v === undefined || v === "") return key === "assigned_to" ? "Unassigned" : "none";
+  if (key === "status") return STATUS[v] || v;
+  if (key === "priority") return `P${v} ${PRIORITY[v] || ""}`.trim();
+  if (key === "category") return CATEGORY[v] || v;
+  if (key === "queue") return QUEUES[v] || v;
+  if (key === "assigned_to") return userName(v);
+  if (key === "duplicate_of") return shortId(v);
+  return String(v);
+}
+
+/** Turns one log entry into { text, details } for display. */
+function describe(e) {
+  switch (e.action) {
+    case "ticket_created": {
+      const how = e.ai_error ? "AI triage failed, sent to staff" : e.status === "ai_resolved" ? "answered by AI" : "sent to staff";
+      return { text: "submitted a ticket", details: [`AI: ${CATEGORY[e.category] || e.category} · P${e.priority} · ${how}`] };
+    }
+    case "ticket_update": {
+      const keys = Object.keys(e.after || {}).filter(k => FIELD[k]);
+      const details = keys.map(k => `${FIELD[k]}: ${fieldValue(k, e.before?.[k])} → ${fieldValue(k, e.after[k])}`);
+      const closed = e.after?.status === "closed";
+      return { text: closed ? "closed a ticket" : "updated a ticket", details };
+    }
+    case "reopen": return { text: "reopened a ticket", details: ["The AI answer didn't solve the problem"] };
+    case "message_delete": {
+      const own = e.author && e.author === e.by;
+      return { text: own ? "deleted their message for everyone" : `removed a message by ${e.author_name || "another user"}`, details: [] };
+    }
+    case "role_change":
+      return { text: `changed ${e.user_name || userName(e.user_id)}'s role`, details: [`${ROLE[e.before] || e.before} → ${ROLE[e.after] || e.after}`] };
+    case "images_deleted": return { text: "deleted the images of a closed ticket", details: ["3 days after the ticket was closed"] };
+    default: return { text: e.action.replace(/_/g, " "), details: [] };
+  }
+}
+
+function activityItem(e) {
+  const who = actorName(e);
+  const { text, details } = describe(e);
+  const system = e.by === "system" || e.by === "make_admin.py";
+  let ticketLink = null;
+  if (e.ticket_id) {
+    const subject = e.ticket_subject || all.find(t => t.id === e.ticket_id)?.subject || "";
+    ticketLink = h("button", { class: "link-btn activity-ticket", type: "button" }, `${shortId(e.ticket_id)}${subject ? ` · ${subject}` : ""}`);
+    ticketLink.addEventListener("click", () => openTicket(e.ticket_id));
+  }
+  return h("li", { class: "activity-item", "data-id": e.id },
+    h("span", { class: `avatar${system ? " system" : ""}`, "aria-hidden": "true" }, system ? icon("refresh", "icon icon-sm") : who[0].toUpperCase()),
+    h("div", { class: "activity-body" },
+      h("p", {}, h("strong", {}, who), ` ${text}`, ticketLink ? " " : "", ticketLink),
+      details.length ? h("ul", { class: "activity-details" }, ...details.map(d => h("li", {}, d))) : null),
+    h("time", { datetime: e.at, title: fullTime(e.at) }, timeAgo(e.at)));
+}
+
+function renderActivity() {
+  const list = $("#activity-list");
+  list.setAttribute("aria-busy", "false");
+  list.replaceChildren(...(activity.entries.length ? activity.entries.map(activityItem)
+    : [h("li", { class: "empty" }, icon("inbox"), h("strong", {}, "No activity yet"))]));
+}
+
+async function loadActivity(older = false) {
+  const more = $("#activity-more");
+  const before = older ? activity.entries.at(-1)?.at : null;
+  if (older) busy(more, true, "Loading…");
+  try {
+    const data = await api(`/api/admin/activity?limit=50${before ? `&before=${encodeURIComponent(before)}` : ""}`);
+    activity.entries = older ? [...activity.entries, ...data.entries] : data.entries;
+    activity.loaded = true;
+    renderActivity();
+    more.hidden = !data.more;
+  } catch (err) {
+    if (!older) $("#activity-list").replaceChildren(h("li", { class: "empty" }, icon("inbox"), h("strong", {}, "Couldn't load activity"), h("span", {}, err.message)));
+    else toast(err.message, "error");
+  } finally {
+    if (older) busy(more, false);
+  }
+}
+
+/** While the Activity tab is open, new entries appear at the top every 10 s. */
+function startActivityLive() {
+  activity.live?.stop();
+  activity.live = poller(async () => {
+    const newest = activity.entries[0]?.at;
+    if (!newest) return loadActivity();
+    const data = await api(`/api/admin/activity?after=${encodeURIComponent(newest)}`);
+    if (!data.entries.length) return;
+    const known = new Set(activity.entries.map(e => e.id));
+    const fresh = data.entries.filter(e => !known.has(e.id));
+    activity.entries = [...fresh, ...activity.entries];
+    const list = $("#activity-list");
+    if (!list.querySelector(".activity-item")) list.replaceChildren();
+    list.prepend(...fresh.map(e => Object.assign(activityItem(e), { className: "activity-item flash" })));
+  }, { visible: 10000, hidden: 60000 });
+}
+
+// ---------- Views ----------
+
+const VIEWS = {
+  queue: ["Support queue", "Sorted by urgency: highest priority first, then oldest."],
+  users: ["Users and roles", "Promote teammates to support staff. You can't remove your own admin role."],
+  activity: ["Activity log", "Every change to tickets and roles, with who made it. Newest first."],
+};
+
 function route() {
-  const view = location.hash === "#users" ? "users" : "queue";
-  $("#queue-view").hidden = view !== "queue";
-  $("#users-view").hidden = view !== "users";
-  $("#nav-queue").removeAttribute("aria-current");
-  $("#nav-users").removeAttribute("aria-current");
+  const view = { "#users": "users", "#activity": "activity" }[location.hash] || "queue";
+  for (const v of Object.keys(VIEWS)) {
+    $(`#${v}-view`).hidden = v !== view;
+    $(`#nav-${v}`).toggleAttribute("aria-current", v === view);
+  }
   $(`#nav-${view}`).setAttribute("aria-current", "page");
   $(".seg").dataset.view = view;
-  $("#view-title").textContent = view === "users" ? "Users and roles" : "Support queue";
-  $("#view-sub").textContent = view === "users"
-    ? "Promote teammates to support staff. You can't remove your own admin role."
-    : "Sorted by urgency: highest priority first, then oldest.";
+  [$("#view-title").textContent, $("#view-sub").textContent] = VIEWS[view];
   if (view === "users") renderUsers();
+  if (view === "activity") {
+    if (!activity.loaded) loadActivity();
+    startActivityLive();
+  } else {
+    activity.live?.stop();
+  }
 }
 
 // ---------- Start ----------
@@ -366,6 +535,7 @@ initShell();
 setupDrawer(drawer);
 followBottom(scroller());
 drawer.addEventListener("close", () => { stopChat(); opening = null; });
+$("#activity-more").addEventListener("click", () => loadActivity(true));
 Object.values(filters).forEach(el => el.addEventListener("input", () => renderQueue(false)));
 window.addEventListener("hashchange", route);
 let wasOffline = !navigator.onLine;
