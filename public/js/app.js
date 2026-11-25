@@ -206,6 +206,19 @@ export function setupHeader(me) {
     );
   }
   $("#signout-btn")?.addEventListener("click", async () => {
+    const name = displayName(me);
+    const choice = await choose({
+      lead: h("div", { class: "sheet-user" },
+        h("span", { class: "avatar", "aria-hidden": "true" }, name[0].toUpperCase()),
+        h("span", {}, h("strong", {}, name), h("small", {}, me?.role === "admin" ? "IT staff" : "Signed in"))),
+      title: "Sign out?",
+      text: `You'll need to sign in again to see ${me?.role === "admin" ? "the support queue" : "your tickets"}. Anything you haven't sent will be lost.`,
+      buttons: [
+        { label: "Sign out", value: "signout", icon: "logout", autofocus: true },
+        { label: "Cancel", value: "", cls: "btn-ghost" },
+      ],
+    });
+    if (choice !== "signout") return;
     await signOut(auth);
     location.replace("/");
   });
@@ -303,27 +316,43 @@ export function replaceMessages(container, messages, ctx) {
   for (const m of messages) container.querySelector(`.msg[data-id="${CSS.escape(m.id)}"]`)?.replaceWith(messageEl(m, ctx));
 }
 
-let deleteSheet = null;
+let sheet = null;
+/**
+ * Confirmation panel: a bottom sheet on phones, a centred card on larger screens.
+ * buttons: [{ label, value, cls, icon, id, autofocus }]. Resolves to the chosen value, or null
+ * when cancelled (Cancel, Esc, or a click outside).
+ */
+export function choose({ title, text, lead, buttons }) {
+  if (!sheet) {
+    sheet = h("dialog", { class: "sheet", "aria-labelledby": "sheet-title", "aria-describedby": "sheet-text" },
+      h("form", { method: "dialog", class: "sheet-inner" }));
+    sheet.addEventListener("click", e => { if (e.target === sheet) sheet.close(""); });
+    document.body.append(sheet);
+  }
+  sheet.firstChild.replaceChildren(
+    lead || null,
+    h("h2", { id: "sheet-title" }, title),
+    h("p", { class: "muted small", id: "sheet-text" }, text || ""),
+    ...buttons.map(b => h("button", { class: `btn btn-block${b.cls ? ` ${b.cls}` : ""}`, value: b.value, id: b.id, autofocus: b.autofocus },
+      b.icon ? icon(b.icon) : null, b.label)));
+  sheet.returnValue = "";
+  sheet.showModal();
+  return new Promise(resolve => sheet.addEventListener("close", () => resolve(sheet.returnValue || null), { once: true }));
+}
+
 /** Asks "delete for me / for everyone". Resolves to "me", "everyone", or null. */
 function chooseDeleteScope(canEveryone) {
-  if (!deleteSheet) {
-    deleteSheet = h("dialog", { class: "sheet", "aria-labelledby": "sheet-title" },
-      h("form", { method: "dialog", class: "sheet-inner" },
-        h("h2", { id: "sheet-title" }, "Delete message?"),
-        h("p", { class: "muted small", id: "sheet-text" }),
-        h("button", { class: "btn btn-danger btn-block", value: "everyone", id: "delete-everyone" }, icon("trash"), "Delete for everyone"),
-        h("button", { class: "btn btn-secondary btn-block", value: "me" }, "Delete for me"),
-        h("button", { class: "btn btn-ghost btn-block", value: "" }, "Cancel")));
-    deleteSheet.addEventListener("click", e => { if (e.target === deleteSheet) deleteSheet.close(""); });
-    document.body.append(deleteSheet);
-  }
-  deleteSheet.querySelector("#delete-everyone").hidden = !canEveryone;
-  deleteSheet.querySelector("#sheet-text").textContent = canEveryone
-    ? "\"Delete for everyone\" removes the message and any image for everyone in this conversation. \"Delete for me\" only hides it from your view."
-    : "This hides the message from your view only. Others in the conversation will still see it.";
-  deleteSheet.returnValue = "";
-  deleteSheet.showModal();
-  return new Promise(resolve => deleteSheet.addEventListener("close", () => resolve(deleteSheet.returnValue || null), { once: true }));
+  return choose({
+    title: "Delete message?",
+    text: canEveryone
+      ? "\"Delete for everyone\" removes the message and any image for everyone in this conversation. \"Delete for me\" only hides it from your view."
+      : "This hides the message from your view only. Others in the conversation will still see it.",
+    buttons: [
+      ...(canEveryone ? [{ label: "Delete for everyone", value: "everyone", cls: "btn-danger", icon: "trash", id: "delete-everyone" }] : []),
+      { label: "Delete for me", value: "me", cls: "btn-secondary" },
+      { label: "Cancel", value: "", cls: "btn-ghost" },
+    ],
+  });
 }
 
 /** Delete flow for one message: choose scope, call the API, update the conversation in place. */

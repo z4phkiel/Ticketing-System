@@ -1,5 +1,5 @@
 // Service worker: caches the app shell only. API calls and ticket data are never cached.
-const SHELL = "shell-v16";
+const SHELL = "shell-v17";
 // Pages use clean URLs (no .html), matching firebase.json "cleanUrls"
 const FILES = ["/", "/tickets", "/admin", "/offline",
   "/css/style.css", "/js/app.js", "/js/config.js", "/js/index.js", "/js/tickets.js", "/js/admin.js",
