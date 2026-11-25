@@ -6,7 +6,7 @@ from werkzeug.exceptions import HTTPException
 
 import service
 from ai_service import AIService
-from auth import firebase_verifier, role_required
+from auth import firebase_verifier, forget_user, role_required
 from config import Settings
 from repo import make_repo
 
@@ -22,6 +22,8 @@ def create_app(settings=None, repo=None, ai=None, verify_token=None):
         LIMITER=service.RateLimiter(settings.tickets_per_window, settings.rate_window_seconds),
         REPLY_LIMITER=service.RateLimiter(settings.replies_per_minute, 60,
                                           "You're sending messages too quickly. Please wait a moment."),
+        TYPING=service.TypingTracker(),
+        TYPING_LIMITER=service.RateLimiter(40, 60, "Too many typing updates."),
         MAX_CONTENT_LENGTH=64 * 1024,
     )
 
@@ -108,7 +110,20 @@ def register_routes(app):
         """Live updates: the ticket plus messages newer than ?since= (polled while a chat is open)."""
         t = service.get_visible_ticket(_repo(), g.user, tid)
         since = service.overlap_since(request.args.get("since"))
-        return {"ticket": _view(t), "messages": _repo().list_messages(tid, since)}
+        typing = current_app.config["TYPING"].active(tid, g.user["uid"])
+        return {"ticket": _view(t), "messages": _repo().list_messages(tid, since), "typing": typing}
+
+    @app.post("/api/tickets/<tid>/typing")
+    @role_required("user", "admin")
+    def typing(tid):
+        """Typing signal, sent at most every few seconds while someone types. Nothing is stored in the database."""
+        tracker = current_app.config["TYPING"]
+        current_app.config["TYPING_LIMITER"].check(g.user["uid"])
+        if not tracker.is_allowed(tid, g.user["uid"]):
+            service.get_visible_ticket(_repo(), g.user, tid)  # 404 unless owner or staff
+            tracker.allow(tid, g.user["uid"])
+        tracker.ping(tid, g.user)
+        return {"ok": True}
 
     @app.post("/api/tickets/<tid>/reply")
     @role_required("user", "admin")
@@ -116,6 +131,7 @@ def register_routes(app):
         data = _json()
         current_app.config["REPLY_LIMITER"].check(g.user["uid"])
         t = service.reply_ticket(_repo(), g.user, tid, data.get("body"))
+        current_app.config["TYPING"].clear(tid, g.user["uid"])
         return {"ticket": _view(t), "messages": _repo().list_messages(tid)}
 
     @app.post("/api/tickets/<tid>/reopen")
@@ -149,4 +165,6 @@ def register_routes(app):
     @app.patch("/api/admin/users/<uid>")
     @role_required("admin")
     def admin_set_role(uid):
-        return {"user": service.set_role(_repo(), g.user, uid, _json().get("role"))}
+        user = service.set_role(_repo(), g.user, uid, _json().get("role"))
+        forget_user(uid)  # apply the new role on their next request
+        return {"user": user}

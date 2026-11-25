@@ -1,4 +1,5 @@
 """Firebase ID token verification and role checks. Roles come only from the repo."""
+import time
 from functools import wraps
 
 from flask import current_app, g, jsonify, request
@@ -17,20 +18,34 @@ def firebase_verifier(project_id):
     return lambda token: auth.verify_id_token(token, clock_skew_seconds=10)
 
 
+# Profiles are cached for a minute so live-chat polling doesn't read the user document on every request.
+# Role changes made in the app call forget_user(); changes made by make_admin.py apply within a minute.
+PROFILE_TTL = 60
+_profiles = {}
+
+
+def forget_user(uid):
+    _profiles.pop(uid, None)
+
+
 def load_user(claims):
     """Return the stored profile, creating it with role 'user' on first login."""
     repo = current_app.config["REPO"]
     uid = claims["uid"]
+    cached = _profiles.get(uid)
+    if cached and cached[0] > time.monotonic() and cached[2] is repo:
+        return dict(cached[1])
     user = repo.get_user(uid)
-    if user:
-        return user
-    email = claims.get("email", "")
-    return repo.create_user(uid, {
-        "email": email,
-        "name": (claims.get("name") or email.split("@")[0])[:40],
-        "role": "user",
-        "created_at": now_iso(),
-    })
+    if not user:
+        email = claims.get("email", "")
+        user = repo.create_user(uid, {
+            "email": email,
+            "name": (claims.get("name") or email.split("@")[0])[:40],
+            "role": "user",
+            "created_at": now_iso(),
+        })
+    _profiles[uid] = (time.monotonic() + PROFILE_TTL, dict(user), repo)
+    return user
 
 
 def role_required(*roles):

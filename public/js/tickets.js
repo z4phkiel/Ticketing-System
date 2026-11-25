@@ -1,8 +1,8 @@
 // User page: submit a ticket, list own tickets, view a conversation, reply, reopen.
 import {
   $, api, appendMessages, busy, categoryChip, counter, displayName, emptyState, enterToSend, fullTime, guard, h,
-  icon, initShell, liveTicket, mergeMessages, renderThread, setupDrawer, setupHeader, shortId, stagger, statusBadge,
-  timeAgo, toast, watchConnection,
+  icon, initShell, liveTicket, mergeMessages, renderThread, renderTyping, setupDrawer, setupHeader, shortId, stagger,
+  statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
 const list = $("#ticket-list");
@@ -116,6 +116,7 @@ const ctx = () => ({ myUid: me.uid, ownerName: displayName(me) });
 function stopChat() {
   chat?.live.stop();
   chat = null;
+  renderTyping($("#typing"), [], null);
 }
 
 async function openTicket(id) {
@@ -149,7 +150,9 @@ function showConversation(ticket, messages) {
     applyTicket(data.ticket);
     const fresh = mergeMessages(list, data.messages);
     appendMessages($("#thread"), scroller(), fresh, ctx());
-    return fresh.length > 0;
+    const typing = data.typing || [];
+    renderTyping($("#typing"), typing, scroller());
+    return fresh.length > 0 || typing.length > 0;
   });
   chat = { id: ticket.id, messages: list, live };
 }
@@ -201,6 +204,7 @@ function renderFooter(ticket, keepDraft) {
     act(send, `/api/tickets/${ticket.id}/reply`, { body: input.value.trim() });
   });
   enterToSend(input);
+  input.addEventListener("input", typingNotifier(ticket.id));
   foot.replaceChildren(formEl);
   send.disabled = !navigator.onLine;
 }
@@ -234,6 +238,7 @@ counter($("#subject"), $("#subject-count"));
 counter($("#body"), $("#body-count"));
 $("#greeting").textContent = `Hi ${displayName(me)}, how can we help?`;
 drawer.addEventListener("close", () => { stopChat(); opening = null; });
+$("#thread").after(typingBubble());
 $("#refresh-btn").addEventListener("click", loadTickets);
 let wasOffline = !navigator.onLine;
 watchConnection(online => {

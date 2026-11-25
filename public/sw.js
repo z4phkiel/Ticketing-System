@@ -1,5 +1,5 @@
 // Service worker: caches the app shell only. API calls and ticket data are never cached.
-const SHELL = "shell-v7";
+const SHELL = "shell-v9";
 const FILES = ["/", "/index.html", "/tickets.html", "/admin.html", "/offline.html",
   "/css/style.css", "/js/app.js", "/js/config.js", "/js/index.js", "/js/tickets.js", "/js/admin.js",
   "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/sprite.svg"];

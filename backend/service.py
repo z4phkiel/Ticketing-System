@@ -61,6 +61,48 @@ def should_auto_resolve(ai, settings):
             and ai.get("priority", 5) < settings.escalation_priority)
 
 
+class TypingTracker:
+    """Who is typing in which ticket. Kept in memory with a short expiry: no database reads or writes.
+    Fine for a single server instance; several instances would need a shared store."""
+
+    TTL = 6.0  # seconds a typing signal stays valid; the browser re-sends every 3 s while typing
+
+    def __init__(self, clock=time.monotonic):
+        self.clock, self.lock = clock, threading.Lock()
+        self.typing = defaultdict(dict)  # ticket id -> {uid: (expires, name, is_staff)}
+        self.allowed = set()             # (ticket id, uid) pairs already permission-checked
+
+    def is_allowed(self, tid, uid):
+        return (tid, uid) in self.allowed
+
+    def allow(self, tid, uid):
+        with self.lock:
+            if len(self.allowed) > 10000:
+                self.allowed.clear()
+            self.allowed.add((tid, uid))
+
+    def ping(self, tid, user):
+        with self.lock:
+            self.typing[tid][user["uid"]] = (self.clock() + self.TTL, display_name(user), user.get("role") == "admin")
+
+    def clear(self, tid, uid):
+        with self.lock:
+            self.typing.get(tid, {}).pop(uid, None)
+
+    def active(self, tid, exclude_uid):
+        """People typing in this ticket right now, other than the viewer."""
+        now = self.clock()
+        with self.lock:
+            entries = self.typing.get(tid)
+            if not entries:
+                return []
+            for uid in [u for u, (expires, *_) in entries.items() if expires <= now]:
+                del entries[uid]
+            if not entries:
+                del self.typing[tid]
+            return [{"name": name, "staff": staff} for uid, (_, name, staff) in entries.items() if uid != exclude_uid]
+
+
 def urgency_sorted(tickets):
     """Highest priority first, then oldest first."""
     return sorted(tickets, key=lambda t: (-t.get("priority", 3), t.get("created_at", "")))

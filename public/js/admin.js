@@ -1,8 +1,8 @@
 // Admin page: urgency-sorted queue, filters, ticket detail with AI analysis, reply, field updates, user roles.
 import {
   $, CATEGORY, PRIORITY, STATUS, api, appendMessages, busy, categoryChip, displayName, enterToSend, fullTime, guard,
-  h, icon, initShell, liveTicket, mergeMessages, priorityBadge, renderThread, setupDrawer, setupHeader, shortId,
-  stagger, statusBadge, timeAgo, toast, watchConnection,
+  h, icon, initShell, liveTicket, mergeMessages, priorityBadge, renderThread, renderTyping, setupDrawer, setupHeader,
+  shortId, stagger, statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
 const drawer = $("#drawer");
@@ -118,7 +118,9 @@ function startChat(t, messages) {
     applyLive(data.ticket);
     const fresh = mergeMessages(list, data.messages);
     appendMessages($("#thread"), scroller(), fresh, ctxFor(data.ticket));
-    return fresh.length > 0;
+    chat.typing = data.typing || [];
+    renderTyping($("#typing"), chat.typing, scroller());
+    return fresh.length > 0 || chat.typing.length > 0;
   });
   chat = { id: t.id, messages: list, live };
 }
@@ -226,11 +228,14 @@ function showTicket(t) {
   }
   parts.push(analysisCard(t), fieldsForm(t),
     h("section", { "aria-label": "Conversation" }, h("h3", { style: "margin-bottom:12px" }, "Conversation"),
-      h("div", { class: "thread", id: "thread" }, h("div", { class: "skeleton line" }))),
+      h("div", { class: "thread", id: "thread" }, h("div", { class: "skeleton line" })), typingBubble()),
     h("details", { class: "small muted" }, h("summary", {}, "Original description"), h("p", { style: "white-space:pre-wrap;margin-top:8px" }, t.body)));
   const keepScroll = drawer.open && prev?.id === t.id ? body.scrollTop : 0;
   body.replaceChildren(...parts.filter(Boolean));
-  if (chat && chat.id === t.id) renderThread($("#thread"), chat.messages, ctxFor(t));
+  if (chat && chat.id === t.id) {
+    renderThread($("#thread"), chat.messages, ctxFor(t));
+    renderTyping($("#typing"), chat.typing || [], null);
+  }
 
   if (!(prev && prev.id === t.id && drawer.open)) renderComposer(t);
   if (!drawer.open) drawer.showModal();
@@ -268,6 +273,7 @@ function renderComposer(t) {
     }
   });
   enterToSend(input);
+  input.addEventListener("input", typingNotifier(t.id));
   $("#drawer-foot").replaceChildren(form);
   send.disabled = !navigator.onLine;
 }

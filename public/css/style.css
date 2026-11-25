@@ -253,6 +253,17 @@ textarea.input { min-height: 140px; resize: vertical; line-height: 1.5; }
 .notice.ai { background: var(--ai-soft); color: #4c1d95; }
 .notice.warn { background: var(--warn-soft); color: #78350f; }
 .notice.error { background: var(--danger-soft); color: #7f1d1d; }
+/* "… is typing" bubble: unfolds under the conversation (uses .reveal), dots bounce gently */
+.typing-bubble {
+  display: inline-flex; align-items: center; gap: 10px; padding: 10px 14px; margin-top: 12px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px; border-bottom-left-radius: 4px;
+  font-size: 0.85rem; color: var(--muted); transform: translateY(6px); transition: transform var(--slow) var(--ease-out);
+}
+.typing.open .typing-bubble { transform: none; }
+.dots { display: inline-flex; gap: 4px; }
+.dots i { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; animation: typing-dot 1.2s var(--ease-out) infinite; }
+.dots i:nth-child(2) { animation-delay: 0.15s; }
+.dots i:nth-child(3) { animation-delay: 0.3s; }
 .composer { display: grid; gap: 10px; }
 .composer textarea.input { min-height: 88px; }
 .composer .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
@@ -272,7 +283,7 @@ textarea.input { min-height: 140px; resize: vertical; line-height: 1.5; }
 .toast.ai .icon { color: #c4b5fd; }
 
 /* Auth page */
-.auth-page { min-height: 100dvh; display: grid; }
+.auth-page { min-height: 100dvh; display: grid; grid-template-rows: auto 1fr; } /* header keeps its height; the form area takes the rest */
 .auth-hero {
   position: relative; overflow: hidden; color: #fff; padding: 28px 20px 32px;
   background: radial-gradient(1200px 500px at -10% -20%, #60a5fa 0%, transparent 55%),
@@ -403,11 +414,13 @@ details.section[open] > summary::after { transform: rotate(-135deg); }
 @media (min-width: 1024px) {
   .user-grid { grid-template-columns: minmax(360px, 5fr) 7fr; align-items: start; }
   .user-grid .compose { position: sticky; top: calc(var(--header-h) + 24px); }
-  .auth-page { grid-template-columns: 1.05fr 1fr; }
+  .auth-page { grid-template-columns: 1.05fr 1fr; grid-template-rows: 1fr; }
   .auth-hero { padding: 40px 56px; display: flex; flex-direction: column; }
   .auth-hero h1 { font-size: 2.5rem; margin-top: auto; }
   .features { display: grid; margin-bottom: auto; }
-  .auth-main { place-items: center; }
+  /* Top-anchored so switching to Create account only grows the card downward; the offset centres the
+     taller Create account card in the viewport (about 610px tall) */
+  .auth-main { place-items: start center; padding-top: max(40px, calc(50dvh - 305px)); }
 
   .card-desktop { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; }
   .queue { display: table; border-collapse: collapse; table-layout: auto; }
@@ -430,6 +443,7 @@ details.section[open] > summary::after { transform: rotate(-135deg); }
 }
 
 /* Motion */
+@keyframes typing-dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.45; } 30% { transform: translateY(-4px); opacity: 1; } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes spin { to { transform: rotate(360deg); } }

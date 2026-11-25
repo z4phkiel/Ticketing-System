@@ -240,3 +240,32 @@ def test_reply_rate_limit(env):
     res = env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "one too many"})
     assert res.status_code == 429 and "messages too quickly" in res.json["error"]
     assert env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "staff not affected"}).status_code == 200
+
+
+# typing indicator
+
+def test_typing_visible_to_other_side_only(env):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    tid = submit(env).json["ticket"]["id"]
+    assert env["call"]("post", f"/api/tickets/{tid}/typing", "a1").status_code == 200
+    seen_by_user = env["call"]("get", f"/api/tickets/{tid}/messages", "u1").json["typing"]
+    assert seen_by_user == [{"name": "a1", "staff": True}]
+    assert env["call"]("get", f"/api/tickets/{tid}/messages", "a1").json["typing"] == []  # not shown to yourself
+    env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "Done typing."})
+    assert env["call"]("get", f"/api/tickets/{tid}/messages", "u1").json["typing"] == []  # cleared on send
+    assert env["call"]("post", f"/api/tickets/{tid}/typing", "u2").status_code == 404     # not your ticket
+
+
+def test_typing_expires():
+    now = [100.0]
+    tracker = service.TypingTracker(clock=lambda: now[0])
+    tracker.ping("t1", {"uid": "a", "name": "alex", "role": "admin"})
+    assert tracker.active("t1", "b") == [{"name": "alex", "staff": True}]
+    now[0] += service.TypingTracker.TTL + 0.1
+    assert tracker.active("t1", "b") == []
+
+
+def test_role_change_applies_immediately(env):
+    env["call"]("get", "/api/me", "u1")  # profile now cached
+    assert env["call"]("patch", "/api/admin/users/u1", "a1", {"role": "admin"}).status_code == 200
+    assert env["call"]("get", "/api/me", "u1").json["role"] == "admin"

@@ -260,11 +260,11 @@ export function appendMessages(container, scroller, messages, ctx, force = false
 
 /**
  * Live updates for one open ticket: polls for messages newer than the last one.
- * Checks every 3 s while a chat is active, slowing to 15 s when quiet; pauses in hidden tabs.
- * onData(data) returns true when something new arrived. Returns { stop, kick }.
+ * Checks every 3 s while a chat is active (new messages or someone typing), slowing to 6 s when quiet;
+ * pauses in hidden tabs. onData(data) returns true when there was activity. Returns { stop, kick }.
  */
 export function liveTicket(id, getSince, onData) {
-  const FAST = 3000, SLOW = 15000;
+  const FAST = 3000, SLOW = 6000;
   let delay = FAST, timer = null, stopped = false, busy = false;
   const schedule = ms => { clearTimeout(timer); if (!stopped) timer = setTimeout(tick, ms); };
   async function tick() {
@@ -290,6 +290,42 @@ export function liveTicket(id, getSince, onData) {
     stop() { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); },
     kick() { delay = FAST; schedule(FAST); },
   };
+}
+
+/** Returns an input handler that tells the server "I'm typing", at most once every 3 s. */
+export function typingNotifier(ticketId) {
+  let last = 0;
+  return e => {
+    if (!e.target.value.trim() || !navigator.onLine || Date.now() - last < 3000) return;
+    last = Date.now();
+    api(`/api/tickets/${encodeURIComponent(ticketId)}/typing`, { method: "POST", wakeHintAfter: 60000 }).catch(() => {});
+  };
+}
+
+/** Shows or hides the "… is typing" bubble. typing = [{ name, staff }] from the live update. */
+export function renderTyping(el, typing, scroller) {
+  if (!el) return;
+  const open = typing.length > 0;
+  if (open) {
+    const names = typing.map(t => t.name);
+    const who = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+    const text = `${who} ${names.length === 1 ? "is" : "are"} typing…`;
+    const label = el.querySelector(".typing-text");
+    if (label.textContent !== text) label.textContent = text;
+  }
+  if (open === el.classList.contains("open")) return;
+  const nearBottom = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160;
+  el.classList.toggle("open", open);
+  if (open && nearBottom) setTimeout(() => scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" }), 60);
+}
+
+/** The typing bubble element (starts folded). */
+export function typingBubble() {
+  return h("div", { class: "reveal typing", id: "typing", "aria-live": "polite" },
+    h("div", { class: "reveal-inner" },
+      h("div", { class: "typing-bubble" },
+        h("span", { class: "dots", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
+        h("span", { class: "typing-text" }))));
 }
 
 /** Enter sends, Shift+Enter adds a new line. */
