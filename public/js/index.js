@@ -27,11 +27,18 @@ function setMode(next) {
   tabs.dataset.tab = mode;
   $("#tab-signin").setAttribute("aria-selected", String(!register));
   $("#tab-register").setAttribute("aria-selected", String(register));
-  $("#name-field").hidden = !register;
-  $("#forgot-btn").hidden = register;
+  const reveal = $("#name-field");
+  reveal.classList.toggle("open", register);
+  reveal.inert = !register; // not focusable or read out while folded away
+  $("#forgot-btn").classList.toggle("is-hidden", register);
+  $("#forgot-btn").tabIndex = register ? -1 : 0;
   $("#password").autocomplete = register ? "new-password" : "current-password";
   submitBtn.textContent = register ? "Create account" : "Sign in";
+  submitBtn.classList.remove("swap");
+  void submitBtn.offsetWidth; // restart the label animation
+  submitBtn.classList.add("swap");
   errorEl.textContent = "";
+  form.querySelectorAll(".input").forEach(i => i.removeAttribute("aria-invalid"));
 }
 
 async function goHome() {
@@ -74,7 +81,10 @@ form.addEventListener("submit", async e => {
 });
 
 $("#tab-signin").addEventListener("click", () => setMode("signin"));
-$("#tab-register").addEventListener("click", () => setMode("register"));
+$("#tab-register").addEventListener("click", () => {
+  setMode("register");
+  setTimeout(() => $("#name").focus({ preventScroll: true }), 250);
+});
 
 $("#forgot-btn").addEventListener("click", async () => {
   const email = $("#email").value.trim();

@@ -295,6 +295,19 @@ textarea.input { min-height: 140px; resize: vertical; line-height: 1.5; }
 .tabs .thumb { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 9px; background: #fff; box-shadow: var(--shadow-sm); transition: transform var(--slow) var(--ease-out); }
 .tabs[data-tab="register"] .thumb { transform: translateX(100%); }
 .auth-card .btn-block { margin-top: 18px; }
+/* Sign-up field unfolds: the row grows from 0 to its natural height while the field fades and rises in */
+.reveal {
+  display: grid; grid-template-rows: 0fr; opacity: 0;
+  transition: grid-template-rows var(--slow) var(--ease-out), opacity var(--fast) var(--ease-out);
+}
+.reveal.open { grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows var(--slow) var(--ease-out), opacity var(--slow) var(--ease-out) 80ms; }
+.reveal-inner { min-height: 0; overflow: hidden; }
+.reveal-inner > .field { padding: 0 3px 14px; margin: 0 -3px; transform: translateY(-8px); transition: transform var(--slow) var(--ease-out); }
+.reveal.open .reveal-inner > .field { transform: none; }
+.reveal + .field { margin-top: 0; }
+#forgot-btn { transition: opacity var(--base) var(--ease-out), visibility var(--base); }
+#forgot-btn.is-hidden { opacity: 0; visibility: hidden; }
+.btn.swap { animation: fade-swap var(--base) var(--ease-out); }
 .link-btn { background: none; border: 0; padding: 4px 0; font: inherit; font-size: 0.875rem; color: var(--primary); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .privacy { margin-top: 18px; font-size: 0.8rem; color: var(--muted); }
 

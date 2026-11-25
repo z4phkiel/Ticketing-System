@@ -26,8 +26,8 @@ class ServiceError(Exception):
 class RateLimiter:
     """In-memory sliding window per key. Per process, which is fine for a single Render instance."""
 
-    def __init__(self, limit, window):
-        self.limit, self.window, self.hits = limit, window, defaultdict(deque)
+    def __init__(self, limit, window, message="You're sending tickets too quickly. Please wait a few minutes."):
+        self.limit, self.window, self.message, self.hits = limit, window, message, defaultdict(deque)
         self.lock = threading.Lock()  # gunicorn runs threads
 
     def check(self, key):
@@ -36,7 +36,7 @@ class RateLimiter:
             while q and now - q[0] > self.window:
                 q.popleft()
             if len(q) >= self.limit:
-                raise ServiceError("You're sending tickets too quickly. Please wait a few minutes.", 429)
+                raise ServiceError(self.message, 429)
             q.append(now)
 
 

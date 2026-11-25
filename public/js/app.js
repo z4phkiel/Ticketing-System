@@ -135,6 +135,12 @@ export async function guard(role) {
 export function registerServiceWorker() {
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
+    // When an updated service worker takes control, reload once to pick up the new files
+    let reloaded = false;
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hadController && !reloaded) { reloaded = true; location.reload(); }
+    });
   }
 }
 

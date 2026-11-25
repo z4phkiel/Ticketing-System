@@ -40,6 +40,7 @@ class Settings:
     duplicate_fallback_score: float = 0.75
     tickets_per_window: int = 5
     rate_window_seconds: int = 600
+    replies_per_minute: int = 30
 
     @classmethod
     def from_env(cls):
@@ -63,4 +64,5 @@ class Settings:
             duplicate_fallback_score=float(os.getenv("DUPLICATE_FALLBACK_SCORE", 0.75)),
             tickets_per_window=int(os.getenv("TICKETS_PER_WINDOW", 5)),
             rate_window_seconds=int(os.getenv("RATE_WINDOW_SECONDS", 600)),
+            replies_per_minute=int(os.getenv("REPLIES_PER_MINUTE", 30)),
         )

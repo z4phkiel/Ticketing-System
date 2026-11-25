@@ -230,3 +230,13 @@ def test_live_messages_since(env):
     assert "ai" not in res.json["ticket"]
     assert env["call"]("get", f"/api/tickets/{tid}/messages", "u2").status_code == 404
     assert env["call"]("get", f"/api/tickets/{tid}/messages?since=nope", "u1").status_code == 400
+
+
+def test_reply_rate_limit(env):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    tid = submit(env).json["ticket"]["id"]
+    for i in range(env["settings"].replies_per_minute):
+        assert env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": f"msg {i}"}).status_code == 200
+    res = env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "one too many"})
+    assert res.status_code == 429 and "messages too quickly" in res.json["error"]
+    assert env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "staff not affected"}).status_code == 200

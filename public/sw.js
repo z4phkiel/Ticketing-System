@@ -1,13 +1,15 @@
 // Service worker: caches the app shell only. API calls and ticket data are never cached.
-const SHELL = "shell-v5";
+const SHELL = "shell-v7";
 const FILES = ["/", "/index.html", "/tickets.html", "/admin.html", "/offline.html",
   "/css/style.css", "/js/app.js", "/js/config.js", "/js/index.js", "/js/tickets.js", "/js/admin.js",
   "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/sprite.svg"];
 const RUNTIME_HOSTS = ["www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com"];
 
+// cache: "reload" skips the browser's HTTP cache so a new version never stores old files
 self.addEventListener("install", e =>
-  e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
-
+  e.waitUntil(caches.open(SHELL)
+    .then(c => c.addAll(FILES.map(f => new Request(f, { cache: "reload" }))))
+    .then(() => self.skipWaiting())));
 self.addEventListener("activate", e =>
   e.waitUntil(caches.keys()
     .then(keys => Promise.all(keys.filter(k => k !== SHELL).map(k => caches.delete(k))))

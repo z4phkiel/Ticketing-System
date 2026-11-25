@@ -30,8 +30,15 @@ def ensure_venv():
 
 
 def serve_frontend():
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(ROOT / "public"))
-    handler.log_message = lambda *args: None  # keep the console readable
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def end_headers(self):
+            self.send_header("Cache-Control", "no-cache")  # always pick up edited files
+            super().end_headers()
+
+        def log_message(self, *args):  # keep the console readable
+            pass
+
+    handler = functools.partial(Handler, directory=str(ROOT / "public"))
     server = http.server.ThreadingHTTPServer(("localhost", 5000), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server

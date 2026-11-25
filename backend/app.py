@@ -20,6 +20,8 @@ def create_app(settings=None, repo=None, ai=None, verify_token=None):
         AI=ai or AIService(settings),
         VERIFY_TOKEN=verify_token or firebase_verifier(settings.firebase_project_id),
         LIMITER=service.RateLimiter(settings.tickets_per_window, settings.rate_window_seconds),
+        REPLY_LIMITER=service.RateLimiter(settings.replies_per_minute, 60,
+                                          "You're sending messages too quickly. Please wait a moment."),
         MAX_CONTENT_LENGTH=64 * 1024,
     )
 
@@ -111,7 +113,9 @@ def register_routes(app):
     @app.post("/api/tickets/<tid>/reply")
     @role_required("user", "admin")
     def reply(tid):
-        t = service.reply_ticket(_repo(), g.user, tid, _json().get("body"))
+        data = _json()
+        current_app.config["REPLY_LIMITER"].check(g.user["uid"])
+        t = service.reply_ticket(_repo(), g.user, tid, data.get("body"))
         return {"ticket": _view(t), "messages": _repo().list_messages(tid)}
 
     @app.post("/api/tickets/<tid>/reopen")
