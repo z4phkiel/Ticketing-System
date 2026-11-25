@@ -1,6 +1,7 @@
 // Service worker: caches the app shell only. API calls and ticket data are never cached.
-const SHELL = "shell-v9";
-const FILES = ["/", "/index.html", "/tickets.html", "/admin.html", "/offline.html",
+const SHELL = "shell-v10";
+// Pages use clean URLs (no .html), matching firebase.json "cleanUrls"
+const FILES = ["/", "/tickets", "/admin", "/offline",
   "/css/style.css", "/js/app.js", "/js/config.js", "/js/index.js", "/js/tickets.js", "/js/admin.js",
   "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/sprite.svg"];
 const RUNTIME_HOSTS = ["www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com"];
@@ -23,7 +24,7 @@ self.addEventListener("fetch", e => {
   if (url.origin !== location.origin && !isRuntime) return;   // API and Auth: network only
   if (req.mode === "navigate") {
     e.respondWith(fetch(req).catch(() =>
-      caches.match(req, { ignoreSearch: true }).then(r => r || caches.match("/offline.html"))));
+      caches.match(req, { ignoreSearch: true }).then(r => r || caches.match("/offline"))));
     return;
   }
   e.respondWith(caches.match(req).then(r => r || fetch(req).then(res => {

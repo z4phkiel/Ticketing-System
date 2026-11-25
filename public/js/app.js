@@ -10,7 +10,7 @@ export const authReady = new Promise(resolve => {
   const off = onAuthStateChanged(auth, user => { off(); resolve(user); });
 });
 
-export const homeFor = role => (role === "admin" ? "/admin.html" : "/tickets.html");
+export const homeFor = role => (role === "admin" ? "/admin" : "/tickets");
 
 /** Username for display. Emails are never shown in the UI. */
 export const displayName = u => u?.name || (u?.email || "").split("@")[0] || "User";
@@ -118,14 +118,14 @@ export async function api(path, { method = "GET", body, wakeHintAfter = 6000 } =
 export async function guard(role) {
   const user = await authReady;
   const never = new Promise(() => {});
-  if (!user) { location.replace("/index.html"); return never; }
+  if (!user) { location.replace("/"); return never; }
   try {
     const me = await api("/api/me");
     if (role && me.role !== role) { location.replace(homeFor(me.role)); return never; }
     return me;
   } catch (err) {
     if (err.status === 0) return { offline: true, email: user.email, role };
-    if (err.status === 401) { await signOut(auth); location.replace("/index.html"); return never; }
+    if (err.status === 401) { await signOut(auth); location.replace("/"); return never; }
     throw err;
   }
 }
@@ -198,7 +198,7 @@ export function setupHeader(me) {
   }
   $("#signout-btn")?.addEventListener("click", async () => {
     await signOut(auth);
-    location.replace("/index.html");
+    location.replace("/");
   });
 }
 

@@ -2,7 +2,7 @@
   "name": "AI Support Desk",
   "short_name": "SupportDesk",
   "description": "IT help desk for computer problems, with AI-assisted triage and instant fixes",
-  "start_url": "/index.html",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#F8FAFC",

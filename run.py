@@ -31,6 +31,13 @@ def ensure_venv():
 
 def serve_frontend():
     class Handler(http.server.SimpleHTTPRequestHandler):
+        def translate_path(self, path):
+            # Clean URLs like Firebase Hosting: /tickets serves tickets.html
+            full = super().translate_path(path)
+            if not os.path.splitext(full)[1] and not os.path.isdir(full) and os.path.isfile(full + ".html"):
+                return full + ".html"
+            return full
+
         def end_headers(self):
             self.send_header("Cache-Control", "no-cache")  # always pick up edited files
             super().end_headers()
