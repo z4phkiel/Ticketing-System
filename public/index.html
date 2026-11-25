@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#2563EB">
-  <meta name="description" content="Submit and track support tickets with instant AI-assisted answers.">
+  <meta name="description" content="Get help with computer problems: submit IT tickets and get instant AI-assisted answers.">
   <title>Sign in · AI Support Desk</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/icon-192.png">
@@ -20,17 +20,17 @@
     <section class="auth-hero">
       <a class="brand" href="/index.html">
         <svg aria-hidden="true"><use href="/icons/sprite.svg#logo"/></svg>
-        <span>AI Support Desk<small>Help that answers instantly</small></span>
+        <span>AI Support Desk<small>IT help for computer problems</small></span>
       </a>
-      <h1>Get answers in seconds, not days.</h1>
-      <p class="lead">Describe your problem once. Our AI reads it, answers what it can right away, and routes the rest to the right person.</p>
+      <h1>Computer trouble? Get answers in seconds.</h1>
+      <p class="lead">Describe what's wrong with your computer, software, or connection. Our AI answers common fixes right away and sends the rest to an IT technician.</p>
       <ul class="features">
         <li style="--i:0"><svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg#zap"/></svg>
-          <div><strong>Instant answers</strong><span>Common questions are resolved the moment you submit.</span></div></li>
+          <div><strong>Instant fixes</strong><span>Wi-Fi, printer, password, and slow-PC issues are answered the moment you submit.</span></div></li>
         <li style="--i:1"><svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg#layers"/></svg>
-          <div><strong>Smart routing</strong><span>Urgent issues jump the queue and reach the right team.</span></div></li>
+          <div><strong>Smart routing</strong><span>Outages and urgent problems jump the queue and reach the right technician.</span></div></li>
         <li style="--i:2"><svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg#shield"/></svg>
-          <div><strong>A human when it matters</strong><span>Security, refunds, and anything tricky always go to an agent.</span></div></li>
+          <div><strong>A technician when it matters</strong><span>Viruses, hacked accounts, hardware repairs, and lost data always go to a person.</span></div></li>
       </ul>
     </section>
 
@@ -44,8 +44,9 @@
 
         <form id="auth-form" novalidate>
           <div class="field" id="name-field" hidden>
-            <label for="name">Full name</label>
-            <input class="input" id="name" name="name" autocomplete="name" maxlength="80">
+            <label for="name">Username</label>
+            <input class="input" id="name" name="username" autocomplete="username" maxlength="30" autocapitalize="none" spellcheck="false">
+            <div class="hint"><span>3-30 characters: letters, numbers, dots, dashes, or underscores.</span></div>
           </div>
           <div class="field">
             <label for="email">Email</label>
@@ -60,7 +61,7 @@
           <p class="form-error" id="form-error" role="alert"></p>
           <button class="btn btn-block" id="submit-btn" type="submit" data-needs-online>Sign in</button>
         </form>
-        <p class="privacy">Tickets are read by an AI service to sort and answer them. Please don't include passwords or payment details.</p>
+        <p class="privacy">Tickets are read by an AI service to sort and answer them. Never include your password.</p>
       </div>
     </main>
   </div>

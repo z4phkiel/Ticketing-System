@@ -1,6 +1,8 @@
 """Ticket logic: submission with AI triage, decision rules, replies, reopen, admin updates."""
+import threading
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timedelta
 
 from ai_service import CATEGORIES, AIError
 from duplicates import find_candidates
@@ -11,8 +13,8 @@ QUEUES = ("billing", "technical", "account", "general")
 SUBJECT_LEN, BODY_LEN, REPLY_LEN = (3, 150), (10, 5000), (1, 5000)
 
 MSG_DUPLICATE = "We're already tracking this issue and will update you here."
-MSG_ESCALATED = "Thanks for reaching out. Your ticket is with our {queue} team and an agent will reply here soon."
-MSG_REOPENED = "Thanks for letting us know. Your ticket is back with our team and an agent will follow up here."
+MSG_ESCALATED = "Thanks for reaching out. Your ticket is with our {queue} support team and an IT technician will reply here soon."
+MSG_REOPENED = "Thanks for letting us know. Your ticket is back with our team and an IT technician will follow up here."
 
 
 class ServiceError(Exception):
@@ -26,14 +28,16 @@ class RateLimiter:
 
     def __init__(self, limit, window):
         self.limit, self.window, self.hits = limit, window, defaultdict(deque)
+        self.lock = threading.Lock()  # gunicorn runs threads
 
     def check(self, key):
-        now, q = time.monotonic(), self.hits[key]
-        while q and now - q[0] > self.window:
-            q.popleft()
-        if len(q) >= self.limit:
-            raise ServiceError("You're sending tickets too quickly. Please wait a few minutes.", 429)
-        q.append(now)
+        with self.lock:
+            now, q = time.monotonic(), self.hits[key]
+            while q and now - q[0] > self.window:
+                q.popleft()
+            if len(q) >= self.limit:
+                raise ServiceError("You're sending tickets too quickly. Please wait a few minutes.", 429)
+            q.append(now)
 
 
 def clean_text(value, name, bounds):
@@ -62,8 +66,26 @@ def urgency_sorted(tickets):
     return sorted(tickets, key=lambda t: (-t.get("priority", 3), t.get("created_at", "")))
 
 
-def message(author_type, author_id, body):
-    return {"author_type": author_type, "author_id": author_id, "body": body, "created_at": now_iso()}
+def display_name(user):
+    """Username shown in the UI; emails are never displayed."""
+    return (user.get("name") or user.get("email", "").split("@")[0] or "user")[:40]
+
+
+def message(author_type, author_id, body, author_name=None):
+    return {"author_type": author_type, "author_id": author_id, "author_name": author_name,
+            "body": body, "created_at": now_iso()}
+
+
+def overlap_since(raw):
+    """Parse the client's 'since' timestamp and step back 10 s, so a message written a moment
+    before a newer one is not skipped. The client de-duplicates by message id."""
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(raw.strip().replace(" ", "+").replace("Z", "+00:00"))  # "+" may arrive as a space
+    except ValueError as exc:
+        raise ServiceError("Invalid 'since' timestamp.") from exc
+    return (ts - timedelta(seconds=10)).isoformat()
 
 
 def user_view(t):
@@ -86,12 +108,13 @@ def submit_ticket(repo, ai_service, settings, user, subject, body):
 
     ts = now_iso()
     tid = repo.create_ticket({
-        "user_id": user["uid"], "user_email": user.get("email", ""), "subject": subject, "body": body,
+        "user_id": user["uid"], "user_email": user.get("email", ""), "user_name": display_name(user),
+        "subject": subject, "body": body,
         "category": "general", "priority": 3, "status": "pending_ai", "queue": "general",
         "assigned_to": None, "duplicate_of": None, "duplicate_count": 0, "ai": {},
         "created_at": ts, "updated_at": ts,
     })
-    repo.add_message(tid, message("user", user["uid"], body))
+    repo.add_message(tid, message("user", user["uid"], body, display_name(user)))
 
     try:
         ai = {**ai_service.analyze_ticket(subject, body, candidates), "error": None}
@@ -146,7 +169,7 @@ def reply_ticket(repo, user, tid, body):
         fields["status"] = "open"  # a follow-up question needs a human
     elif not is_owner and t["status"] in ("open", "pending_ai"):
         fields["status"] = "in_progress"
-    repo.add_message(tid, message("user" if is_owner else "admin", user["uid"], body))
+    repo.add_message(tid, message("user" if is_owner else "admin", user["uid"], body, display_name(user)))
     repo.update_ticket(tid, fields)
     return repo.get_ticket(tid)
 

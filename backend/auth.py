@@ -27,7 +27,7 @@ def load_user(claims):
     email = claims.get("email", "")
     return repo.create_user(uid, {
         "email": email,
-        "name": claims.get("name") or email.split("@")[0],
+        "name": (claims.get("name") or email.split("@")[0])[:40],
         "role": "user",
         "created_at": now_iso(),
     })

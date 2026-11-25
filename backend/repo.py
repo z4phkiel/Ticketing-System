@@ -65,8 +65,8 @@ class MemoryRepo:
     def add_message(self, tid, data):
         self.messages[tid].append({**data, "id": f"m{len(self.messages[tid]) + 1}"})
 
-    def list_messages(self, tid):
-        return copy.deepcopy(self.messages.get(tid, []))
+    def list_messages(self, tid, since=None):
+        return copy.deepcopy([m for m in self.messages.get(tid, []) if not since or m["created_at"] > since])
 
     def add_audit(self, data):
         self.audit.append(data)
@@ -145,9 +145,13 @@ class FirestoreRepo:
     def add_message(self, tid, data):
         self.db.collection("tickets").document(tid).collection("messages").add(data)
 
-    def list_messages(self, tid):
-        q = self.db.collection("tickets").document(tid).collection("messages").order_by("created_at")
-        return [{**s.to_dict(), "id": s.id} for s in q.stream()]
+    def list_messages(self, tid, since=None):
+        """All messages, or only those newer than 'since' (cheap polling: few document reads)."""
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        q = self.db.collection("tickets").document(tid).collection("messages")
+        if since:
+            q = q.where(filter=FieldFilter("created_at", ">", since))
+        return [{**s.to_dict(), "id": s.id} for s in q.order_by("created_at").stream()]
 
     def add_audit(self, data):
         self.db.collection("audit_log").add(data)

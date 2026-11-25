@@ -52,7 +52,9 @@ form.addEventListener("submit", async e => {
   const name = $("#name").value.trim();
   if (!email || !$("#email").checkValidity()) return showError("Enter a valid email address.", $("#email"));
   if (password.length < 6) return showError("Password must be at least 6 characters.", $("#password"));
-  if (mode === "register" && !name) return showError("Enter your name.", $("#name"));
+  if (mode === "register" && !/^[A-Za-z0-9._-]{3,30}$/.test(name)) {
+    return showError("Username must be 3-30 characters: letters, numbers, dots, dashes, or underscores.", $("#name"));
+  }
 
   showError("");
   busy(submitBtn, true, mode === "register" ? "Creating account…" : "Signing in…");

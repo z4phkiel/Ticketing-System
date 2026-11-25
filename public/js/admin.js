@@ -1,7 +1,8 @@
 // Admin page: urgency-sorted queue, filters, ticket detail with AI analysis, reply, field updates, user roles.
 import {
-  $, CATEGORY, PRIORITY, STATUS, api, busy, categoryChip, fullTime, guard, h, icon, initShell, priorityBadge,
-  renderThread, setupDrawer, setupHeader, shortId, stagger, statusBadge, timeAgo, toast, watchConnection,
+  $, CATEGORY, PRIORITY, STATUS, api, appendMessages, busy, categoryChip, displayName, enterToSend, fullTime, guard,
+  h, icon, initShell, liveTicket, mergeMessages, priorityBadge, renderThread, setupDrawer, setupHeader, shortId,
+  stagger, statusBadge, timeAgo, toast, watchConnection,
 } from "./app.js";
 
 const drawer = $("#drawer");
@@ -13,13 +14,14 @@ let all = [];
 let users = [];
 let current = null;
 
-const userName = uid => users.find(u => u.uid === uid)?.name || users.find(u => u.uid === uid)?.email || "Unknown";
+const userName = uid => { const u = users.find(x => x.uid === uid); return u ? displayName(u) : "Unknown"; };
+const ownerName = t => t.user_name || (users.some(u => u.uid === t.user_id) ? userName(t.user_id) : "User");
 
 // ---------- Queue ----------
 
 function matches(t) {
   const q = filters.search.value.trim().toLowerCase();
-  if (q && ![t.subject, t.body, t.user_email].some(v => (v || "").toLowerCase().includes(q))) return false;
+  if (q && ![t.subject, t.body, ownerName(t)].some(v => (v || "").toLowerCase().includes(q))) return false;
   return ["status", "category", "queue"].every(k => !filters[k].value || t[k] === filters[k].value);
 }
 
@@ -36,7 +38,7 @@ function queueRow(t) {
     h("td", {}, priorityBadge(t.priority)),
     h("td", { class: "subj" },
       h("strong", {}, t.subject),
-      h("span", {}, `${t.user_email} · ${shortId(t.id)}`,
+      h("span", {}, `${ownerName(t)} · ${shortId(t.id)}`,
         t.duplicate_of ? " · duplicate" : "",
         t.duplicate_count ? ` · ${t.duplicate_count} duplicate report${t.duplicate_count > 1 ? "s" : ""}` : "")),
     h("td", {}, categoryChip(t.category)),
@@ -78,18 +80,56 @@ function upsert(ticket) {
   renderQueue(false);
 }
 
-// ---------- Ticket drawer ----------
+// ---------- Ticket drawer (live chat) ----------
+
+let chat = null; // { id, messages, live } for the open ticket
+let opening = null;
+const scroller = () => $("#drawer-body");
+const ctxFor = t => ({ myUid: me.uid, ownerName: ownerName(t) });
+
+function stopChat() {
+  chat?.live.stop();
+  chat = null;
+}
 
 async function openTicket(id) {
+  stopChat();
+  opening = id;
+  current = null;
   const cached = all.find(t => t.id === id);
-  if (cached) showTicket(cached, null);
+  if (cached) showTicket(cached);
   try {
     const data = await api(`/api/tickets/${encodeURIComponent(id)}`);
+    if (opening !== id || !drawer.open) return;
     upsert(data.ticket);
-    showTicket(data.ticket, data.messages);
+    showTicket(data.ticket);
+    startChat(data.ticket, data.messages);
   } catch (err) {
     toast(err.message, "error");
   }
+}
+
+function startChat(t, messages) {
+  stopChat();
+  const list = [];
+  mergeMessages(list, messages);
+  renderThread($("#thread"), list, ctxFor(t));
+  const live = liveTicket(t.id, () => list.at(-1)?.created_at, data => {
+    applyLive(data.ticket);
+    const fresh = mergeMessages(list, data.messages);
+    appendMessages($("#thread"), scroller(), fresh, ctxFor(data.ticket));
+    return fresh.length > 0;
+  });
+  chat = { id: t.id, messages: list, live };
+}
+
+/** Live update: refresh badges and the queue row without rebuilding the panel (keeps edits). */
+function applyLive(t) {
+  const prev = current;
+  if (prev && prev.status === t.status && prev.updated_at === t.updated_at) return;
+  current = t;
+  renderHeader(t, prev);
+  upsert(t);
 }
 
 function select(id, options, value) {
@@ -125,7 +165,7 @@ function analysisCard(t) {
 }
 
 function fieldsForm(t) {
-  const admins = Object.fromEntries([["", "Unassigned"], ...users.filter(u => u.role === "admin").map(u => [u.uid, u.name || u.email])]);
+  const admins = Object.fromEntries([["", "Unassigned"], ...users.filter(u => u.role === "admin").map(u => [u.uid, displayName(u)])]);
   const statuses = Object.fromEntries(Object.entries(STATUS).filter(([k]) => k !== "pending_ai" || t.status === "pending_ai"));
   const priorities = Object.fromEntries([5, 4, 3, 2, 1].map(p => [p, `P${p} ${PRIORITY[p]}`]));
   const field = (label, id, control, full) => h("div", { class: `field${full ? " full" : ""}` }, h("label", { for: id }, label), control);
@@ -151,15 +191,20 @@ function fieldsForm(t) {
   return h("details", { class: "card card-pad section" }, h("summary", {}, "Update ticket"), form);
 }
 
-function showTicket(t, messages) {
-  const changed = current && current.id === t.id && current.status !== t.status;
-  current = t;
-  $("#drawer-id").textContent = `${shortId(t.id)} · ${t.user_email} · ${fullTime(t.created_at)}`;
+function renderHeader(t, prev) {
+  $("#drawer-id").textContent = `${shortId(t.id)} · ${ownerName(t)} · ${fullTime(t.created_at)}`;
   $("#drawer-title").textContent = t.subject;
   const status = statusBadge(t.status);
-  if (changed) status.classList.add("pop");
+  if (prev && prev.id === t.id && prev.status !== t.status) status.classList.add("pop");
   $("#drawer-badges").replaceChildren(...[priorityBadge(t.priority), status, categoryChip(t.category),
     t.assigned_to && h("span", { class: "badge chip" }, `Assigned: ${userName(t.assigned_to)}`)].filter(Boolean));
+}
+
+/** Builds the whole panel. The conversation is kept in `chat` and redrawn into the new thread element. */
+function showTicket(t) {
+  const prev = current;
+  current = t;
+  renderHeader(t, prev);
 
   const body = $("#drawer-body");
   const parts = [];
@@ -183,16 +228,18 @@ function showTicket(t, messages) {
     h("section", { "aria-label": "Conversation" }, h("h3", { style: "margin-bottom:12px" }, "Conversation"),
       h("div", { class: "thread", id: "thread" }, h("div", { class: "skeleton line" }))),
     h("details", { class: "small muted" }, h("summary", {}, "Original description"), h("p", { style: "white-space:pre-wrap;margin-top:8px" }, t.body)));
+  const keepScroll = drawer.open && prev?.id === t.id ? body.scrollTop : 0;
   body.replaceChildren(...parts.filter(Boolean));
-  if (messages) renderThread($("#thread"), messages, "admin");
+  if (chat && chat.id === t.id) renderThread($("#thread"), chat.messages, ctxFor(t));
 
-  renderComposer(t);
-  if (!drawer.open) { drawer.showModal(); body.scrollTop = 0; }
+  if (!(prev && prev.id === t.id && drawer.open)) renderComposer(t);
+  if (!drawer.open) drawer.showModal();
+  body.scrollTop = keepScroll;
 }
 
 function renderComposer(t) {
-  const input = h("textarea", { class: "input", maxlength: "5000", "aria-label": "Reply to customer", placeholder: "Reply to the customer…" });
-  const send = h("button", { class: "btn", type: "submit", "data-needs-online": true }, icon("send"), "Send reply");
+  const input = h("textarea", { class: "input", maxlength: "5000", "aria-label": "Message to user", placeholder: "Message the user… (Enter to send, Shift+Enter for a new line)" });
+  const send = h("button", { class: "btn", type: "submit", "data-needs-online": true }, icon("send"), "Send");
   const actions = [send];
   const draft = t.ai?.suggested_response;
   if (draft && t.status !== "ai_resolved") {
@@ -203,20 +250,24 @@ function renderComposer(t) {
   const form = h("form", { class: "composer" }, input, h("div", { class: "actions" }, ...actions));
   form.addEventListener("submit", async e => {
     e.preventDefault();
-    if (!input.value.trim()) return input.focus();
+    if (!input.value.trim() || send.disabled) return input.focus();
     busy(send, true);
     try {
       const data = await api(`/api/tickets/${t.id}/reply`, { method: "POST", body: { body: input.value.trim() } });
-      upsert(data.ticket);
-      showTicket(data.ticket, data.messages);
-      const b = $("#drawer-body");
-      b.scrollTop = b.scrollHeight;
-      toast("Reply sent.", "success");
+      input.value = "";
+      applyLive(data.ticket);
+      if (chat) {
+        appendMessages($("#thread"), scroller(), mergeMessages(chat.messages, data.messages), ctxFor(data.ticket), true);
+        chat.live.kick();
+      }
     } catch (err) {
-      busy(send, false);
       toast(err.message, "error");
+    } finally {
+      busy(send, false);
+      input.focus();
     }
   });
+  enterToSend(input);
   $("#drawer-foot").replaceChildren(form);
   send.disabled = !navigator.onLine;
 }
@@ -225,8 +276,9 @@ async function patch(btn, id, changes, success) {
   busy(btn, true);
   try {
     const data = await api(`/api/admin/tickets/${encodeURIComponent(id)}`, { method: "PATCH", body: changes });
+    if (chat) mergeMessages(chat.messages, data.messages);
     upsert(data.ticket);
-    showTicket(data.ticket, data.messages);
+    showTicket(data.ticket);
     toast(success, "success");
   } catch (err) {
     busy(btn, false);
@@ -250,23 +302,22 @@ function renderUsers() {
   body.classList.add("stagger");
   body.replaceChildren(...users.map(u => {
     const self = u.uid === me.uid;
-    const role = h("select", { class: "input", "aria-label": `Role for ${u.email}`, disabled: self, "data-needs-online": !self },
+    const role = h("select", { class: "input", "aria-label": `Role for ${displayName(u)}`, disabled: self, "data-needs-online": !self },
       h("option", { value: "user", selected: u.role === "user" }, "User"),
       h("option", { value: "admin", selected: u.role === "admin" }, "Support staff"));
     role.addEventListener("change", async () => {
       try {
         const data = await api(`/api/admin/users/${encodeURIComponent(u.uid)}`, { method: "PATCH", body: { role: role.value } });
         Object.assign(u, data.user);
-        toast(`${u.email} is now ${role.value === "admin" ? "support staff" : "a user"}.`, "success");
+        toast(`${displayName(u)} is now ${role.value === "admin" ? "support staff" : "a user"}.`, "success");
       } catch (err) {
         role.value = u.role;
         toast(err.message, "error");
       }
     });
     return h("tr", {},
-      h("td", {}, u.name || "–", self ? h("span", { class: "muted small" }, " (you)") : null),
-      h("td", { class: "email" }, u.email),
-      h("td", { class: "muted small" }, u.created_at ? new Date(u.created_at).toLocaleDateString() : "–"),
+      h("td", { class: "uname" }, displayName(u), self ? h("span", { class: "muted small" }, " (you)") : null),
+      h("td", { class: "muted small hide-sm" }, u.created_at ? new Date(u.created_at).toLocaleDateString() : "–"),
       h("td", {}, role));
   }));
   stagger(body);
@@ -295,6 +346,7 @@ me = await guard("admin");
 setupHeader(me);
 initShell();
 setupDrawer(drawer);
+drawer.addEventListener("close", () => { stopChat(); opening = null; });
 Object.values(filters).forEach(el => el.addEventListener("input", () => renderQueue(false)));
 window.addEventListener("hashchange", route);
 let wasOffline = !navigator.onLine;

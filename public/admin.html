@@ -18,7 +18,7 @@
   <header class="app-header">
     <a class="brand" href="/admin.html">
       <svg aria-hidden="true"><use href="/icons/sprite.svg#logo"/></svg>
-      <span>AI Support Desk<small class="role-tag">Staff console</small></span>
+      <span>AI Support Desk<small class="role-tag">IT staff console</small></span>
     </a>
     <div class="header-actions">
       <button class="btn btn-secondary" id="install-btn" type="button" hidden>
@@ -52,7 +52,7 @@
       <div class="filters">
         <div class="field grow">
           <label for="f-search" class="sr-only">Search</label>
-          <input class="input" id="f-search" type="search" placeholder="Search subject, text, or email">
+          <input class="input" id="f-search" type="search" placeholder="Search subject, text, or username">
         </div>
         <div class="field">
           <label for="f-status" class="sr-only">Status</label>
@@ -92,7 +92,7 @@
     <section id="users-view" aria-label="Users" hidden>
       <div class="card table-wrap">
         <table class="user-table">
-          <thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Role</th></tr></thead>
+          <thead><tr><th>Username</th><th class="hide-sm">Joined</th><th>Role</th></tr></thead>
           <tbody id="users-body"></tbody>
         </table>
       </div>

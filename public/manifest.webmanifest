@@ -1,7 +1,7 @@
 {
   "name": "AI Support Desk",
   "short_name": "SupportDesk",
-  "description": "Submit and manage support tickets with AI-assisted triage",
+  "description": "IT help desk for computer problems, with AI-assisted triage and instant fixes",
   "start_url": "/index.html",
   "scope": "/",
   "display": "standalone",

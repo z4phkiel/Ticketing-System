@@ -207,3 +207,26 @@ def test_similarity():
 def test_urgency_sorted():
     ts = [{"priority": 2, "created_at": "1"}, {"priority": 5, "created_at": "3"}, {"priority": 5, "created_at": "2"}]
     assert [(t["priority"], t["created_at"]) for t in service.urgency_sorted(ts)] == [(5, "2"), (5, "3"), (2, "1")]
+
+
+# usernames and live messages
+
+def test_usernames_stored_instead_of_showing_email(env):
+    res = submit(env)
+    stored = env["repo"].get_ticket(res.json["ticket"]["id"])
+    assert stored["user_name"] == "u1"
+    assert res.json["messages"][0]["author_name"] == "u1"
+
+
+def test_live_messages_since(env):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    tid = submit(env).json["ticket"]["id"]
+    first = env["call"]("get", f"/api/tickets/{tid}/messages", "u1").json["messages"]
+    env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "On it."})
+    since = first[-1]["created_at"]
+    res = env["call"]("get", f"/api/tickets/{tid}/messages?since={since}", "u1")
+    assert res.json["messages"][-1]["body"] == "On it."
+    assert res.json["ticket"]["status"] == "in_progress"
+    assert "ai" not in res.json["ticket"]
+    assert env["call"]("get", f"/api/tickets/{tid}/messages", "u2").status_code == 404
+    assert env["call"]("get", f"/api/tickets/{tid}/messages?since=nope", "u1").status_code == 400

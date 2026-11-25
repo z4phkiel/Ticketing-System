@@ -12,6 +12,9 @@ export const authReady = new Promise(resolve => {
 
 export const homeFor = role => (role === "admin" ? "/admin.html" : "/tickets.html");
 
+/** Username for display. Emails are never shown in the UI. */
+export const displayName = u => u?.name || (u?.email || "").split("@")[0] || "User";
+
 // ---------- DOM helpers (text only, never innerHTML, so user and AI text cannot inject markup) ----------
 
 export function h(tag, attrs = {}, ...children) {
@@ -180,10 +183,11 @@ export function setupInstall() {
 /** Header user chip and sign-out. Clears in-memory data by leaving the page. */
 export function setupHeader(me) {
   const chip = $("#user-chip");
-  if (chip && me?.email) {
+  if (chip && (me?.name || me?.email)) {
+    const name = displayName(me);
     chip.replaceChildren(
-      h("span", { class: "avatar", "aria-hidden": "true" }, (me.name || me.email)[0].toUpperCase()),
-      h("span", {}, me.email),
+      h("span", { class: "avatar", "aria-hidden": "true" }, name[0].toUpperCase()),
+      h("span", {}, name),
     );
   }
   $("#signout-btn")?.addEventListener("click", async () => {
@@ -210,20 +214,83 @@ export function emptyState(iconName, title, text) {
   return h("li", { class: "empty" }, icon(iconName), h("strong", {}, title), text ? h("span", {}, text) : null);
 }
 
-/** Renders a conversation. viewer is "user" or "admin". */
-export function renderThread(container, messages, viewer) {
-  const label = m => {
-    if (m.author_type === "ai") return ["AI assistant", h("span", { class: "ai-tag" }, icon("sparkle", "icon icon-sm"), "AI-generated")];
-    if (m.author_type === "system") return ["Support Desk"];
-    if (m.author_type === "admin") return [viewer === "admin" ? "Support agent" : "Support team"];
-    return [viewer === "admin" ? "Customer" : "You"];
+// ---------- Conversation (live chat) ----------
+
+/** One chat message. ctx = { myUid, ownerName } where ownerName labels older messages without a name. */
+export function messageEl(m, ctx, index = 0) {
+  const mine = m.author_id && m.author_id === ctx.myUid;
+  let who;
+  if (m.author_type === "ai") who = ["AI assistant", h("span", { class: "ai-tag" }, icon("sparkle", "icon icon-sm"), "AI-generated")];
+  else if (m.author_type === "system") who = ["Help desk"];
+  else if (mine) who = ["You"];
+  else if (m.author_type === "admin") who = [m.author_name || "IT support", h("span", { class: "ai-tag staff-tag" }, "IT support")];
+  else who = [m.author_name || ctx.ownerName || "User"];
+  const cls = mine ? "mine" : ["ai", "system"].includes(m.author_type) ? m.author_type : "agent";
+  return h("div", { class: `msg ${cls}`, style: index ? `animation-delay:${Math.min(index, 8) * 40}ms` : null },
+    h("div", { class: "who" }, ...who, h("time", { datetime: m.created_at, title: fullTime(m.created_at) }, `· ${timeAgo(m.created_at)}`)),
+    h("div", { class: "bubble" }, m.body));
+}
+
+export function renderThread(container, messages, ctx) {
+  container.replaceChildren(...messages.map((m, i) => messageEl(m, ctx, i)));
+}
+
+/** Adds messages not seen before (by id) to list; returns only the new ones, oldest first. */
+export function mergeMessages(list, incoming) {
+  const seen = new Set(list.map(m => m.id));
+  const fresh = incoming.filter(m => !seen.has(m.id));
+  list.push(...fresh);
+  list.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  return fresh.sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/** Appends new messages and follows them if the reader was already near the bottom (or forced). */
+export function appendMessages(container, scroller, messages, ctx, force = false) {
+  if (!messages.length) return;
+  const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160;
+  container.append(...messages.map(m => messageEl(m, ctx)));
+  if (nearBottom || force) requestAnimationFrame(() => scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" }));
+}
+
+/**
+ * Live updates for one open ticket: polls for messages newer than the last one.
+ * Checks every 3 s while a chat is active, slowing to 15 s when quiet; pauses in hidden tabs.
+ * onData(data) returns true when something new arrived. Returns { stop, kick }.
+ */
+export function liveTicket(id, getSince, onData) {
+  const FAST = 3000, SLOW = 15000;
+  let delay = FAST, timer = null, stopped = false, busy = false;
+  const schedule = ms => { clearTimeout(timer); if (!stopped) timer = setTimeout(tick, ms); };
+  async function tick() {
+    if (stopped || busy) return;
+    if (document.hidden || !navigator.onLine) return schedule(delay);
+    busy = true;
+    try {
+      const since = getSince();
+      const q = since ? `?since=${encodeURIComponent(since)}` : "";
+      const data = await api(`/api/tickets/${encodeURIComponent(id)}/messages${q}`, { wakeHintAfter: 60000 });
+      if (!stopped) delay = onData(data) ? FAST : Math.min(Math.round(delay * 1.5), SLOW);
+    } catch {
+      delay = Math.min(delay * 2, 30000);
+    } finally {
+      busy = false;
+    }
+    schedule(delay);
+  }
+  const onVisible = () => { if (!document.hidden) { delay = FAST; schedule(0); } };
+  document.addEventListener("visibilitychange", onVisible);
+  schedule(FAST);
+  return {
+    stop() { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); },
+    kick() { delay = FAST; schedule(FAST); },
   };
-  const cls = m => (m.author_type === "user" ? (viewer === "user" ? "mine" : "agent")
-    : m.author_type === "admin" ? (viewer === "admin" ? "mine" : "agent") : m.author_type);
-  container.replaceChildren(...messages.map((m, i) =>
-    h("div", { class: `msg ${cls(m)}`, style: `animation-delay:${Math.min(i, 8) * 40}ms` },
-      h("div", { class: "who" }, ...label(m), h("time", { datetime: m.created_at, title: fullTime(m.created_at) }, `· ${timeAgo(m.created_at)}`)),
-      h("div", { class: "bubble" }, m.body))));
+}
+
+/** Enter sends, Shift+Enter adds a new line. */
+export function enterToSend(textarea) {
+  textarea.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); textarea.form?.requestSubmit(); }
+  });
 }
 
 /** Character counter for an input with maxlength. */

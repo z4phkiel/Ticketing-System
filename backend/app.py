@@ -57,6 +57,10 @@ def _repo():
     return current_app.config["REPO"]
 
 
+def _view(t):
+    return t if g.user["role"] == "admin" else service.user_view(t)
+
+
 def _json():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -94,15 +98,21 @@ def register_routes(app):
     @role_required("user", "admin")
     def ticket_detail(tid):
         t = service.get_visible_ticket(_repo(), g.user, tid)
-        view = t if g.user["role"] == "admin" else service.user_view(t)
-        return {"ticket": view, "messages": _repo().list_messages(tid)}
+        return {"ticket": _view(t), "messages": _repo().list_messages(tid)}
+
+    @app.get("/api/tickets/<tid>/messages")
+    @role_required("user", "admin")
+    def ticket_messages(tid):
+        """Live updates: the ticket plus messages newer than ?since= (polled while a chat is open)."""
+        t = service.get_visible_ticket(_repo(), g.user, tid)
+        since = service.overlap_since(request.args.get("since"))
+        return {"ticket": _view(t), "messages": _repo().list_messages(tid, since)}
 
     @app.post("/api/tickets/<tid>/reply")
     @role_required("user", "admin")
     def reply(tid):
         t = service.reply_ticket(_repo(), g.user, tid, _json().get("body"))
-        view = t if g.user["role"] == "admin" else service.user_view(t)
-        return {"ticket": view, "messages": _repo().list_messages(tid)}
+        return {"ticket": _view(t), "messages": _repo().list_messages(tid)}
 
     @app.post("/api/tickets/<tid>/reopen")
     @role_required("user", "admin")

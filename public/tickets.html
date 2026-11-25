@@ -18,7 +18,7 @@
   <header class="app-header">
     <a class="brand" href="/tickets.html">
       <svg aria-hidden="true"><use href="/icons/sprite.svg#logo"/></svg>
-      <span>AI Support Desk<small>Customer help</small></span>
+      <span>AI Support Desk<small>IT help desk</small></span>
     </a>
     <div class="header-actions">
       <button class="btn btn-secondary" id="install-btn" type="button" hidden>
@@ -33,7 +33,7 @@
     <div class="page-head">
       <div>
         <h1 id="greeting">How can we help?</h1>
-        <p class="muted">Most questions are answered instantly. Anything else goes straight to our team.</p>
+        <p class="muted">Tell us what's wrong with your computer. Common fixes arrive instantly; anything else goes to an IT technician.</p>
       </div>
     </div>
 
@@ -46,13 +46,13 @@
         <form id="ticket-form" novalidate>
           <div class="field">
             <label for="subject">Subject</label>
-            <input class="input" id="subject" name="subject" maxlength="150" required placeholder="e.g. Can't download my invoice">
+            <input class="input" id="subject" name="subject" maxlength="150" required placeholder="e.g. Laptop won't connect to Wi-Fi">
             <div class="hint"><span>A short summary.</span><span class="counter" id="subject-count"></span></div>
           </div>
           <div class="field">
             <label for="body">Describe the problem</label>
-            <textarea class="input" id="body" name="body" maxlength="5000" required placeholder="What happened, what you expected, and any steps you already tried."></textarea>
-            <div class="hint"><span>Don't include passwords or card numbers.</span><span class="counter" id="body-count"></span></div>
+            <textarea class="input" id="body" name="body" maxlength="5000" required placeholder="What happened, any error message you saw, which device and operating system (e.g. Windows 11), and what you already tried."></textarea>
+            <div class="hint"><span>Never include your password.</span><span class="counter" id="body-count"></span></div>
           </div>
           <p class="form-error" id="ticket-error" role="alert"></p>
           <button class="btn btn-block" id="ticket-submit" type="submit" data-needs-online>
