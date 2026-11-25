@@ -1,7 +1,7 @@
 // User page: submit a ticket, list own tickets, view a conversation, reply, reopen.
 import {
-  $, api, appendMessages, busy, categoryChip, counter, displayName, emptyState, enterToSend, fullTime, guard, h,
-  followBottom, icon, initShell, liveTicket, mergeMessages, renderThread, renderTyping, setupDrawer, setupHeader, shortId, stagger,
+  $, api, appendMessages, attachControls, busy, categoryChip, counter, displayName, ctrlEnterToSend, emptyState, fullTime, guard, h,
+  followBottom, icon, initShell, liveTicket, mergeMessages, rememberSentImage, renderThread, renderTyping, setupDrawer, setupHeader, shortId, stagger,
   statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
@@ -188,7 +188,7 @@ function renderFooter(ticket, keepDraft) {
     foot.replaceChildren(h("p", { class: "muted small" }, "This ticket is closed. Submit a new ticket if you need more help."));
     return;
   }
-  const input = h("textarea", { class: "input", id: "reply-input", maxlength: "5000", "aria-label": "Your message", placeholder: "Type a message… (Enter to send, Shift+Enter for a new line)" });
+  const input = h("textarea", { class: "input", id: "reply-input", maxlength: "5000", "aria-label": "Your message", placeholder: "Type a message… (Ctrl+Enter to send)" });
   input.value = draft;
   const send = h("button", { class: "btn", type: "submit", "data-needs-online": true }, icon("send"), "Send");
   const actions = [send];
@@ -197,23 +197,29 @@ function renderFooter(ticket, keepDraft) {
     reopen.addEventListener("click", () => act(reopen, `/api/tickets/${ticket.id}/reopen`, null, "Sent to our IT team."));
     actions.unshift(reopen);
   }
-  const formEl = h("form", { class: "composer" }, input, h("div", { class: "actions" }, ...actions));
+  const formEl = h("form", { class: "composer" });
+  const attach = attachControls(input, formEl);
+  formEl.append(attach.preview, input, h("div", { class: "actions" }, attach.button, attach.input, ...actions));
   formEl.addEventListener("submit", e => {
     e.preventDefault();
-    if (!input.value.trim() || send.disabled) return input.focus();
-    act(send, `/api/tickets/${ticket.id}/reply`, { body: input.value.trim() });
+    const img = attach.get();
+    if ((!input.value.trim() && !img) || send.disabled) return input.focus();
+    const body = { body: input.value.trim() };
+    if (img) body.image = { data: img.data, type: img.type, width: img.width, height: img.height };
+    act(send, `/api/tickets/${ticket.id}/reply`, body, null, img && { url: img.url, clear: attach.clear });
   });
-  enterToSend(input);
+  ctrlEnterToSend(input);
   input.addEventListener("input", typingNotifier(ticket.id));
   foot.replaceChildren(formEl);
   send.disabled = !navigator.onLine;
 }
 
-async function act(btn, path, body, success) {
+async function act(btn, path, body, success, sentImage) {
   busy(btn, true);
   try {
-    const data = await api(path, { method: "POST", body });
+    const data = await api(path, { method: "POST", body, wakeHintAfter: sentImage ? 20000 : 6000 });
     if (body && $("#reply-input")) $("#reply-input").value = "";
+    if (sentImage) { rememberSentImage(data.messages, me.uid, sentImage.url); sentImage.clear(); }
     applyTicket(data.ticket);
     if (chat) {
       appendMessages($("#thread"), scroller(), mergeMessages(chat.messages, data.messages), ctx(), true);

@@ -13,7 +13,7 @@ def now_iso():
 
 class MemoryRepo:
     def __init__(self):
-        self.users, self.tickets, self.messages, self.audit = {}, {}, {}, []
+        self.users, self.tickets, self.messages, self.audit, self.attachments = {}, {}, {}, [], {}
         self._ids = itertools.count(1)
 
     def _id(self):
@@ -70,6 +70,15 @@ class MemoryRepo:
 
     def add_audit(self, data):
         self.audit.append(data)
+
+    # image attachments
+    def add_attachment(self, data):
+        aid = f"a{next(self._ids):05d}"
+        self.attachments[aid] = {**data, "id": aid}
+        return aid
+
+    def get_attachment(self, aid):
+        return copy.deepcopy(self.attachments.get(aid))
 
 
 class FirestoreRepo:
@@ -155,6 +164,15 @@ class FirestoreRepo:
 
     def add_audit(self, data):
         self.db.collection("audit_log").add(data)
+
+    # image attachments: one document each (bytes field, under Firestore's 1 MiB document limit)
+    def add_attachment(self, data):
+        ref = self.db.collection("attachments").document()
+        ref.set(data)
+        return ref.id
+
+    def get_attachment(self, aid):
+        return self._doc(self.db.collection("attachments").document(aid).get())
 
 
 def make_repo(settings):

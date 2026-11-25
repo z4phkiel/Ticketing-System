@@ -269,3 +269,48 @@ def test_role_change_applies_immediately(env):
     env["call"]("get", "/api/me", "u1")  # profile now cached
     assert env["call"]("patch", "/api/admin/users/u1", "a1", {"role": "admin"}).status_code == 200
     assert env["call"]("get", "/api/me", "u1").json["role"] == "admin"
+
+
+# image attachments
+
+import base64 as _b64  # noqa: E402
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+def image(raw=PNG, kind="image/png", **extra):
+    return {"data": _b64.b64encode(raw).decode(), "type": kind, "width": 640, "height": 360, **extra}
+
+
+def test_image_reply_and_access(env):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    tid = submit(env).json["ticket"]["id"]
+    res = env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "", "image": image()})
+    assert res.status_code == 200
+    att = res.json["messages"][-1]["attachment"]
+    assert att["type"] == "image/png" and att["width"] == 640 and "data" not in att
+    for who in ("u1", "a1"):
+        got = env["call"]("get", f"/api/attachments/{att['id']}", who)
+        assert got.status_code == 200 and got.data == PNG and got.mimetype == "image/png"
+        assert got.headers["Cache-Control"] == "no-store"
+    assert env["call"]("get", f"/api/attachments/{att['id']}", "u2").status_code == 404
+    assert env["call"]("get", "/api/attachments/nope", "u1").status_code == 404
+
+
+@pytest.mark.parametrize("bad", [
+    image(raw=b"<svg onload=alert(1)>", kind="image/png"),   # not really a PNG
+    image(kind="image/svg+xml"),                              # type not allowed
+    image(raw=b"\xff\xd8\xff" + b"\x00" * 900_000, kind="image/jpeg"),  # too large
+    {"data": "%%%not-base64", "type": "image/png"},
+])
+def test_bad_images_rejected(env, bad):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    tid = submit(env).json["ticket"]["id"]
+    assert env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "see", "image": bad}).status_code == 400
+    assert not env["repo"].attachments
+
+
+def test_text_or_image_required(env):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    tid = submit(env).json["ticket"]["id"]
+    assert env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "  "}).status_code == 400

@@ -1,4 +1,6 @@
 """Ticket logic: submission with AI triage, decision rules, replies, reopen, admin updates."""
+import base64
+import binascii
 import threading
 import time
 from collections import defaultdict, deque
@@ -11,6 +13,12 @@ from repo import now_iso
 STATUSES = ("pending_ai", "ai_resolved", "open", "in_progress", "closed")
 QUEUES = ("billing", "technical", "account", "general")
 SUBJECT_LEN, BODY_LEN, REPLY_LEN = (3, 150), (10, 5000), (1, 5000)
+MAX_IMAGE_BYTES = 900_000  # stored in one Firestore document (1 MiB limit); the browser compresses first
+IMAGE_SIGNATURES = {
+    "image/jpeg": lambda b: b[:3] == b"\xff\xd8\xff",
+    "image/png": lambda b: b[:8] == b"\x89PNG\r\n\x1a\n",
+    "image/webp": lambda b: b[:4] == b"RIFF" and b[8:12] == b"WEBP",
+}
 
 MSG_DUPLICATE = "We're already tracking this issue and will update you here."
 MSG_ESCALATED = "Thanks for reaching out. Your ticket is with our {queue} support team and an IT technician will reply here soon."
@@ -200,20 +208,68 @@ def reopen_ticket(repo, user, tid):
     return repo.get_ticket(tid)
 
 
-def reply_ticket(repo, user, tid, body):
+def decode_image(image):
+    """Validate an uploaded image: allowed type, real image bytes (checked by signature), size limit."""
+    if not isinstance(image, dict):
+        raise ServiceError("Invalid image.")
+    ctype = image.get("type")
+    if ctype not in IMAGE_SIGNATURES:
+        raise ServiceError("Images must be JPEG, PNG, or WebP.")
+    try:
+        raw = base64.b64decode(image.get("data") or "", validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ServiceError("Invalid image data.") from exc
+    if not raw:
+        raise ServiceError("Invalid image data.")
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise ServiceError("That image is too large to send. Try a smaller screenshot.")
+    if not IMAGE_SIGNATURES[ctype](raw):
+        raise ServiceError("That file isn't a valid image.")
+    dims = [image.get(k) for k in ("width", "height")]
+    ok = all(isinstance(d, int) and not isinstance(d, bool) and 0 < d <= 10000 for d in dims)
+    return raw, ctype, dims if ok else [None, None]
+
+
+def reply_ticket(repo, user, tid, body, image=None):
     t = get_visible_ticket(repo, user, tid)
-    body = clean_text(body, "Reply", REPLY_LEN)
+    if image is None:
+        body = clean_text(body, "Reply", REPLY_LEN)
+    else:  # text is optional with an image
+        body = body.strip() if isinstance(body, str) else ""
+        if len(body) > REPLY_LEN[1]:
+            raise ServiceError(f"Reply must be at most {REPLY_LEN[1]} characters.")
     is_owner = t["user_id"] == user["uid"]
     if is_owner and t["status"] == "closed":
         raise ServiceError("This ticket is closed. Please open a new ticket.", 409)
+    attachment = None
+    if image is not None:
+        raw, ctype, (width, height) = decode_image(image)
+        aid = repo.add_attachment({"ticket_id": tid, "uploaded_by": user["uid"], "content_type": ctype,
+                                   "data": raw, "size": len(raw), "created_at": now_iso()})
+        attachment = {"id": aid, "type": ctype, "width": width, "height": height}
     fields = {"updated_at": now_iso()}
     if is_owner and t["status"] == "ai_resolved":
         fields["status"] = "open"  # a follow-up question needs a human
     elif not is_owner and t["status"] in ("open", "pending_ai"):
         fields["status"] = "in_progress"
-    repo.add_message(tid, message("user" if is_owner else "admin", user["uid"], body, display_name(user)))
+    msg = message("user" if is_owner else "admin", user["uid"], body, display_name(user))
+    if attachment:
+        msg["attachment"] = attachment
+    repo.add_message(tid, msg)
     repo.update_ticket(tid, fields)
     return repo.get_ticket(tid)
+
+
+def get_attachment(repo, user, aid):
+    """The image, only for people who can see its ticket. Others get 404."""
+    a = repo.get_attachment(aid)
+    if not a:
+        raise ServiceError("Image not found.", 404)
+    try:
+        get_visible_ticket(repo, user, a["ticket_id"])
+    except ServiceError as exc:
+        raise ServiceError("Image not found.", 404) from exc
+    return a
 
 
 def admin_update(repo, admin, tid, changes):

@@ -1,7 +1,7 @@
 """Flask JSON API: routes, CORS, and error handlers."""
 import logging
 
-from flask import Flask, current_app, g, jsonify, request
+from flask import Flask, Response, current_app, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 import service
@@ -22,9 +22,10 @@ def create_app(settings=None, repo=None, ai=None, verify_token=None):
         LIMITER=service.RateLimiter(settings.tickets_per_window, settings.rate_window_seconds),
         REPLY_LIMITER=service.RateLimiter(settings.replies_per_minute, 60,
                                           "You're sending messages too quickly. Please wait a moment."),
+        IMAGE_LIMITER=service.RateLimiter(10, 600, "You're sending images too quickly. Please wait a few minutes."),
         TYPING=service.TypingTracker(),
         TYPING_LIMITER=service.RateLimiter(40, 60, "Too many typing updates."),
-        MAX_CONTENT_LENGTH=64 * 1024,
+        MAX_CONTENT_LENGTH=1536 * 1024,  # room for one compressed image (sent as base64) plus text
     )
 
     @app.after_request
@@ -130,9 +131,21 @@ def register_routes(app):
     def reply(tid):
         data = _json()
         current_app.config["REPLY_LIMITER"].check(g.user["uid"])
-        t = service.reply_ticket(_repo(), g.user, tid, data.get("body"))
+        if data.get("image") is not None:
+            current_app.config["IMAGE_LIMITER"].check(g.user["uid"])
+        t = service.reply_ticket(_repo(), g.user, tid, data.get("body"), data.get("image"))
         current_app.config["TYPING"].clear(tid, g.user["uid"])
         return {"ticket": _view(t), "messages": _repo().list_messages(tid)}
+
+    @app.get("/api/attachments/<aid>")
+    @role_required("user", "admin")
+    def attachment(aid):
+        """Image bytes for the ticket owner and staff. no-store: ticket data is not kept on the device."""
+        a = service.get_attachment(_repo(), g.user, aid)
+        res = Response(bytes(a["data"]), mimetype=a["content_type"])
+        res.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                            "Content-Disposition": "inline"})
+        return res
 
     @app.post("/api/tickets/<tid>/reopen")
     @role_required("user", "admin")

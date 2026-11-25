@@ -264,7 +264,33 @@ textarea.input { min-height: 140px; resize: vertical; line-height: 1.5; }
 .dots i { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; animation: typing-dot 1.2s var(--ease-out) infinite; }
 .dots i:nth-child(2) { animation-delay: 0.15s; }
 .dots i:nth-child(3) { animation-delay: 0.3s; }
-.composer { display: grid; gap: 10px; }
+.composer { display: grid; gap: 10px; border-radius: var(--radius); transition: box-shadow var(--fast) var(--ease-out); }
+.composer.dragging { box-shadow: 0 0 0 2px var(--primary), 0 0 0 6px var(--primary-soft); }
+.attach-btn { margin-right: auto; color: var(--muted); }
+.attach-reveal { margin-bottom: -10px; }
+.attach-reveal.open { margin-bottom: 0; }
+.attach-preview { display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px dashed var(--border-strong); border-radius: 12px; background: var(--card); }
+.attach-preview img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
+.attach-preview .btn-icon { margin-left: auto; }
+
+/* Images in the conversation */
+.bubble .text { display: block; }
+.bubble .shot-frame + .text { margin-top: 8px; }
+.bubble.image-only { padding: 6px; }
+.shot-frame { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 10px; overflow: hidden; max-width: min(100%, 320px); }
+.shot-frame.loading { background: linear-gradient(90deg, #eef2f7 0%, #f8fafc 50%, #eef2f7 100%); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; }
+.shot { display: block; width: 100%; height: auto; opacity: 1; transition: opacity var(--base) var(--ease-out); }
+.shot-frame.loading .shot { opacity: 0; }
+.msg.mine .shot-frame.loading { background: rgb(255 255 255 / 0.25); }
+
+.lightbox { padding: 0; border: 0; background: transparent; max-width: 96vw; max-height: 92dvh; overflow: visible;
+  opacity: 1; transform: none; transition: opacity var(--base) var(--ease-out), transform var(--base) var(--ease-out), overlay var(--base) allow-discrete, display var(--base) allow-discrete; }
+.lightbox:not([open]) { opacity: 0; transform: scale(0.96); }
+@starting-style { .lightbox[open] { opacity: 0; transform: scale(0.96); } }
+.lightbox::backdrop { background: rgb(15 23 42 / 0.85); }
+.lightbox img { display: block; max-width: 96vw; max-height: 92dvh; border-radius: 12px; cursor: zoom-out; }
+.lightbox-close { position: fixed; top: 12px; right: 12px; background: rgb(15 23 42 / 0.6); color: #fff; }
+.lightbox-close:hover { background: rgb(15 23 42 / 0.8); }
 .composer textarea.input { min-height: 88px; }
 .composer .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 

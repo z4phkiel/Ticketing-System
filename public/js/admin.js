@@ -1,7 +1,7 @@
 // Admin page: urgency-sorted queue, filters, ticket detail with AI analysis, reply, field updates, user roles.
 import {
-  $, CATEGORY, PRIORITY, STATUS, api, appendMessages, busy, categoryChip, displayName, enterToSend, fullTime, guard,
-  followBottom, h, icon, initShell, liveTicket, mergeMessages, priorityBadge, renderThread, renderTyping, setupDrawer, setupHeader,
+  $, CATEGORY, PRIORITY, STATUS, api, appendMessages, attachControls, busy, categoryChip, ctrlEnterToSend, displayName, fullTime, guard,
+  followBottom, h, icon, initShell, liveTicket, mergeMessages, priorityBadge, rememberSentImage, renderThread, renderTyping, setupDrawer, setupHeader,
   shortId, stagger, statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
@@ -243,7 +243,7 @@ function showTicket(t) {
 }
 
 function renderComposer(t) {
-  const input = h("textarea", { class: "input", maxlength: "5000", "aria-label": "Message to user", placeholder: "Message the user… (Enter to send, Shift+Enter for a new line)" });
+  const input = h("textarea", { class: "input", maxlength: "5000", "aria-label": "Message to user", placeholder: "Message the user… (Ctrl+Enter to send)" });
   const send = h("button", { class: "btn", type: "submit", "data-needs-online": true }, icon("send"), "Send");
   const actions = [send];
   const draft = t.ai?.suggested_response;
@@ -252,14 +252,20 @@ function renderComposer(t) {
     use.addEventListener("click", () => { input.value = draft; input.focus(); });
     actions.unshift(use);
   }
-  const form = h("form", { class: "composer" }, input, h("div", { class: "actions" }, ...actions));
+  const form = h("form", { class: "composer" });
+  const attach = attachControls(input, form);
+  form.append(attach.preview, input, h("div", { class: "actions" }, attach.button, attach.input, ...actions));
   form.addEventListener("submit", async e => {
     e.preventDefault();
-    if (!input.value.trim() || send.disabled) return input.focus();
+    const img = attach.get();
+    if ((!input.value.trim() && !img) || send.disabled) return input.focus();
+    const body = { body: input.value.trim() };
+    if (img) body.image = { data: img.data, type: img.type, width: img.width, height: img.height };
     busy(send, true);
     try {
-      const data = await api(`/api/tickets/${t.id}/reply`, { method: "POST", body: { body: input.value.trim() } });
+      const data = await api(`/api/tickets/${t.id}/reply`, { method: "POST", body, wakeHintAfter: img ? 20000 : 6000 });
       input.value = "";
+      if (img) { rememberSentImage(data.messages, me.uid, img.url); attach.clear(); }
       applyLive(data.ticket);
       if (chat) {
         appendMessages($("#thread"), scroller(), mergeMessages(chat.messages, data.messages), ctxFor(data.ticket), true);
@@ -272,7 +278,7 @@ function renderComposer(t) {
       input.focus();
     }
   });
-  enterToSend(input);
+  ctrlEnterToSend(input);
   input.addEventListener("input", typingNotifier(t.id));
   $("#drawer-foot").replaceChildren(form);
   send.disabled = !navigator.onLine;

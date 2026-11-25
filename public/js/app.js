@@ -114,6 +114,15 @@ export async function api(path, { method = "GET", body, wakeHintAfter = 6000 } =
   return data;
 }
 
+/** Fetches binary data (images) from the API with the user's token. */
+export async function apiBlob(path) {
+  const user = auth.currentUser;
+  if (!user || !navigator.onLine) throw new ApiError("Not available offline.", 0);
+  const res = await fetch(API_BASE + path, { headers: { Authorization: `Bearer ${await user.getIdToken()}` } });
+  if (!res.ok) throw new ApiError(`Image request failed (${res.status}).`, res.status);
+  return res.blob();
+}
+
 /** Sends signed-out visitors to login and wrong roles to their own page. Returns the profile. */
 export async function guard(role) {
   const user = await authReady;
@@ -234,7 +243,9 @@ export function messageEl(m, ctx, index = 0) {
   const cls = mine ? "mine" : ["ai", "system"].includes(m.author_type) ? m.author_type : "agent";
   return h("div", { class: `msg ${cls}`, style: index ? `animation-delay:${Math.min(index, 8) * 40}ms` : null },
     h("div", { class: "who" }, ...who, h("time", { datetime: m.created_at, title: fullTime(m.created_at) }, `· ${timeAgo(m.created_at)}`)),
-    h("div", { class: "bubble" }, m.body));
+    h("div", { class: `bubble${m.attachment && !m.body ? " image-only" : ""}` },
+      m.attachment ? attachmentEl(m.attachment) : null,
+      m.body ? h("span", { class: "text" }, m.body) : null));
 }
 
 export function renderThread(container, messages, ctx) {
@@ -355,10 +366,147 @@ export function typingBubble() {
         h("span", { class: "typing-text" }))));
 }
 
-/** Enter sends, Shift+Enter adds a new line. */
-export function enterToSend(textarea) {
+// ---------- Image attachments ----------
+
+const MAX_UPLOAD = 880_000; // the server accepts up to 900 KB per image
+const images = new Map();   // attachment id -> Promise<object URL>; kept in memory only, never on disk
+
+const toBase64 = blob => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result).split(",")[1]);
+  r.onerror = reject;
+  r.readAsDataURL(blob);
+});
+
+/**
+ * Shrinks and re-encodes a picked or pasted image as JPEG so it fits the size limit.
+ * Re-encoding also drops hidden metadata such as GPS location.
+ */
+export async function prepareImage(file) {
+  if (!file.type.startsWith("image/")) throw new Error("Please choose an image file.");
+  if (file.size > 15e6) throw new Error("That image is over 15 MB. Please choose a smaller one.");
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    throw new Error("That file couldn't be read as an image.");
+  }
+  try {
+    for (const [side, quality] of [[1600, 0.85], [1280, 0.8], [1024, 0.75], [800, 0.7]]) {
+      const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = Object.assign(document.createElement("canvas"), { width, height });
+      const g = canvas.getContext("2d");
+      g.fillStyle = "#fff"; // transparent PNGs get a white background in JPEG
+      g.fillRect(0, 0, width, height);
+      g.drawImage(bitmap, 0, 0, width, height);
+      const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", quality));
+      if (blob && blob.size <= MAX_UPLOAD) return { blob, width, height, type: "image/jpeg", data: await toBase64(blob) };
+    }
+  } finally {
+    bitmap.close();
+  }
+  throw new Error("That image is too detailed to send. Try a smaller screenshot.");
+}
+
+function loadImage(id) {
+  if (!images.has(id)) {
+    const p = apiBlob(`/api/attachments/${encodeURIComponent(id)}`).then(b => URL.createObjectURL(b));
+    p.catch(() => images.delete(id));
+    images.set(id, p);
+  }
+  return images.get(id);
+}
+
+/** After sending, reuse the local preview for your own image instead of downloading it again. */
+export function rememberSentImage(messages, myUid, url) {
+  const m = [...messages].reverse().find(x => x.attachment && x.author_id === myUid);
+  if (m && url && !images.has(m.attachment.id)) images.set(m.attachment.id, Promise.resolve(url));
+}
+
+function attachmentEl(att) {
+  // width/height reserve the space up front, so the chat doesn't jump when the image arrives
+  const img = h("img", { class: "shot", alt: "Attached image", width: att.width, height: att.height, decoding: "async" });
+  const frame = h("button", { class: "shot-frame loading", type: "button", "aria-label": "Open image" }, img);
+  loadImage(att.id)
+    .then(url => { img.src = url; img.addEventListener("load", () => frame.classList.remove("loading"), { once: true }); })
+    .catch(() => frame.replaceWith(h("span", { class: "small muted" }, navigator.onLine ? "Image couldn't be loaded." : "Image not available offline.")));
+  frame.addEventListener("click", () => img.src && openLightbox(img.src));
+  return frame;
+}
+
+let lightbox = null;
+function openLightbox(src) {
+  if (!lightbox) {
+    lightbox = h("dialog", { class: "lightbox", "aria-label": "Image" },
+      h("img", { alt: "Attached image, enlarged" }),
+      h("button", { class: "btn btn-icon lightbox-close", type: "button", "aria-label": "Close" }, icon("x")));
+    lightbox.addEventListener("click", () => lightbox.close());
+    document.body.append(lightbox);
+  }
+  lightbox.querySelector("img").src = src;
+  lightbox.showModal();
+}
+
+/**
+ * Attach-image controls for a message box: image button, paste, and drag-and-drop.
+ * Returns { button, input, preview, get, clear }.
+ */
+export function attachControls(textarea, form) {
+  let current = null; // { data, type, width, height, url, blob }
+  const input = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true });
+  const button = h("button", { class: "btn btn-ghost btn-icon attach-btn", type: "button", "aria-label": "Attach an image", title: "Attach an image (or paste a screenshot)", "data-needs-online": true }, icon("image"));
+  const preview = h("div", { class: "reveal attach-reveal" }, h("div", { class: "reveal-inner" }, h("div", { class: "attach-preview" })));
+  const box = preview.querySelector(".attach-preview");
+
+  const clear = () => {
+    current = null;
+    preview.classList.remove("open");
+    preview.inert = true;
+  };
+  const set = async file => {
+    if (!file) return;
+    button.disabled = true;
+    try {
+      const img = await prepareImage(file);
+      current = { ...img, url: URL.createObjectURL(img.blob) };
+      const remove = h("button", { class: "btn btn-ghost btn-icon", type: "button", "aria-label": "Remove image" }, icon("x"));
+      remove.addEventListener("click", () => { clear(); textarea.focus(); });
+      box.replaceChildren(h("img", { src: current.url, alt: "" }),
+        h("span", { class: "small muted" }, `Image ready · ${Math.max(1, Math.round(img.blob.size / 1024))} KB`), remove);
+      preview.inert = false;
+      preview.classList.add("open");
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      button.disabled = !navigator.onLine;
+      input.value = "";
+    }
+  };
+  const firstImage = list => [...(list || [])].find(f => f.type.startsWith("image/"));
+
+  button.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => set(input.files[0]));
+  textarea.addEventListener("paste", e => {
+    const file = firstImage(e.clipboardData?.files);
+    if (file) { e.preventDefault(); set(file); }
+  });
+  form.addEventListener("dragover", e => { if ([...e.dataTransfer.items].some(i => i.type.startsWith("image/"))) { e.preventDefault(); form.classList.add("dragging"); } });
+  form.addEventListener("dragleave", () => form.classList.remove("dragging"));
+  form.addEventListener("drop", e => {
+    form.classList.remove("dragging");
+    const file = firstImage(e.dataTransfer.files);
+    if (file) { e.preventDefault(); set(file); }
+  });
+  clear();
+  return { button, input, preview, get: () => current, clear };
+}
+
+/** Enter adds a new line as usual; Ctrl+Enter (Cmd+Enter on Mac) sends. */
+export function ctrlEnterToSend(textarea) {
   textarea.addEventListener("keydown", e => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); textarea.form?.requestSubmit(); }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); textarea.form?.requestSubmit(); }
   });
 }
 
