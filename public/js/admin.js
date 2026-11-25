@@ -1,7 +1,7 @@
 // Admin page: urgency-sorted queue, filters, ticket detail with AI analysis, reply, field updates, user roles.
 import {
   $, CATEGORY, PRIORITY, STATUS, api, appendMessages, busy, categoryChip, displayName, enterToSend, fullTime, guard,
-  h, icon, initShell, liveTicket, mergeMessages, priorityBadge, renderThread, renderTyping, setupDrawer, setupHeader,
+  followBottom, h, icon, initShell, liveTicket, mergeMessages, priorityBadge, renderThread, renderTyping, setupDrawer, setupHeader,
   shortId, stagger, statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
@@ -352,6 +352,7 @@ me = await guard("admin");
 setupHeader(me);
 initShell();
 setupDrawer(drawer);
+followBottom(scroller());
 drawer.addEventListener("close", () => { stopChat(); opening = null; });
 Object.values(filters).forEach(el => el.addEventListener("input", () => renderQueue(false)));
 window.addEventListener("hashchange", route);

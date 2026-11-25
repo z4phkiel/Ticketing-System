@@ -1,7 +1,7 @@
 // User page: submit a ticket, list own tickets, view a conversation, reply, reopen.
 import {
   $, api, appendMessages, busy, categoryChip, counter, displayName, emptyState, enterToSend, fullTime, guard, h,
-  icon, initShell, liveTicket, mergeMessages, renderThread, renderTyping, setupDrawer, setupHeader, shortId, stagger,
+  followBottom, icon, initShell, liveTicket, mergeMessages, renderThread, renderTyping, setupDrawer, setupHeader, shortId, stagger,
   statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
@@ -234,6 +234,7 @@ const me = await guard("user");
 setupHeader(me);
 initShell();
 setupDrawer(drawer);
+followBottom(scroller());
 counter($("#subject"), $("#subject-count"));
 counter($("#body"), $("#body-count"));
 $("#greeting").textContent = `Hi ${displayName(me)}, how can we help?`;

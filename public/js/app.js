@@ -251,9 +251,36 @@ export function mergeMessages(list, incoming) {
 }
 
 /** Appends new messages and follows them if the reader was already near the bottom (or forced). */
+/**
+ * Keeps a chat pinned to its newest content while the reader is at the bottom: while the typing
+ * bubble unfolds, and when the phone keyboard opens or closes. Scrolling up stops the following.
+ */
+export function followBottom(scroller) {
+  if (scroller._follow) return;
+  scroller._follow = true;
+  scroller._atBottom = false;
+  scroller.addEventListener("scroll", () => {
+    scroller._atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+  }, { passive: true });
+  // The keyboard (or rotating the phone) resizes the chat; stay at the bottom if we were there
+  new ResizeObserver(() => { if (scroller._atBottom) scroller.scrollTop = scroller.scrollHeight; }).observe(scroller);
+}
+
+const isAtBottom = (s, slack = 80) => s._atBottom || s.scrollHeight - s.scrollTop - s.clientHeight < slack;
+
+/** Holds the scroll at the bottom on every frame while content grows (e.g. an unfolding bubble). */
+function pinToBottom(scroller, ms) {
+  const end = performance.now() + ms;
+  const step = () => {
+    scroller.scrollTop = scroller.scrollHeight;
+    if (performance.now() < end) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 export function appendMessages(container, scroller, messages, ctx, force = false) {
   if (!messages.length) return;
-  const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160;
+  const nearBottom = isAtBottom(scroller, 160);
   container.append(...messages.map(m => messageEl(m, ctx)));
   if (nearBottom || force) requestAnimationFrame(() => scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" }));
 }
@@ -314,9 +341,9 @@ export function renderTyping(el, typing, scroller) {
     if (label.textContent !== text) label.textContent = text;
   }
   if (open === el.classList.contains("open")) return;
-  const nearBottom = scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160;
+  const follow = scroller && isAtBottom(scroller);
   el.classList.toggle("open", open);
-  if (open && nearBottom) setTimeout(() => scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" }), 60);
+  if (open && follow) pinToBottom(scroller, 700); // the bubble unfolds over ~600 ms
 }
 
 /** The typing bubble element (starts folded). */
