@@ -36,7 +36,7 @@ export function icon(name, cls = "icon") {
   svg.setAttribute("class", cls);
   svg.setAttribute("aria-hidden", "true");
   const use = document.createElementNS(ns, "use");
-  use.setAttribute("href", `/icons/sprite.svg#${name}`);
+  use.setAttribute("href", `/icons/sprite.svg?v=2#${name}`);
   svg.append(use);
   return svg;
 }
