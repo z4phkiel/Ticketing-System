@@ -66,7 +66,19 @@ class MemoryRepo:
         self.messages[tid].append({**data, "id": f"m{len(self.messages[tid]) + 1}"})
 
     def list_messages(self, tid, since=None):
-        return copy.deepcopy([m for m in self.messages.get(tid, []) if not since or m["created_at"] > since])
+        changed = lambda m: m.get("updated_at", m["created_at"]) > since  # noqa: E731
+        return copy.deepcopy([m for m in self.messages.get(tid, []) if not since or changed(m)])
+
+    def get_message(self, tid, mid):
+        return copy.deepcopy(next((m for m in self.messages.get(tid, []) if m["id"] == mid), None))
+
+    def update_message(self, tid, mid, fields):
+        next(m for m in self.messages[tid] if m["id"] == mid).update(copy.deepcopy(fields))
+
+    def hide_message(self, tid, mid, uid):
+        m = next(m for m in self.messages[tid] if m["id"] == mid)
+        if uid not in m.setdefault("hidden_for", []):
+            m["hidden_for"].append(uid)
 
     def add_audit(self, data):
         self.audit.append(data)
@@ -79,6 +91,15 @@ class MemoryRepo:
 
     def get_attachment(self, aid):
         return copy.deepcopy(self.attachments.get(aid))
+
+    def delete_attachment(self, aid):
+        self.attachments.pop(aid, None)
+
+    def attachment_ids_for_ticket(self, tid):
+        return [aid for aid, a in self.attachments.items() if a["ticket_id"] == tid]
+
+    def tickets_due_for_purge(self, now):
+        return copy.deepcopy([t for t in self.tickets.values() if t.get("purge_after") and t["purge_after"] <= now])
 
 
 class FirestoreRepo:
@@ -158,9 +179,24 @@ class FirestoreRepo:
         """All messages, or only those newer than 'since' (cheap polling: few document reads)."""
         from google.cloud.firestore_v1.base_query import FieldFilter
         q = self.db.collection("tickets").document(tid).collection("messages")
-        if since:
-            q = q.where(filter=FieldFilter("created_at", ">", since))
-        return [{**s.to_dict(), "id": s.id} for s in q.order_by("created_at").stream()]
+        if since:  # new or changed (e.g. deleted) messages
+            q = q.where(filter=FieldFilter("updated_at", ">", since)).order_by("updated_at")
+        else:
+            q = q.order_by("created_at")
+        items = [{**s.to_dict(), "id": s.id} for s in q.stream()]
+        return sorted(items, key=lambda m: m["created_at"])
+
+    def _message_ref(self, tid, mid):
+        return self.db.collection("tickets").document(tid).collection("messages").document(mid)
+
+    def get_message(self, tid, mid):
+        return self._doc(self._message_ref(tid, mid).get())
+
+    def update_message(self, tid, mid, fields):
+        self._message_ref(tid, mid).update(fields)
+
+    def hide_message(self, tid, mid, uid):
+        self._message_ref(tid, mid).update({"hidden_for": self._fs.ArrayUnion([uid])})
 
     def add_audit(self, data):
         self.db.collection("audit_log").add(data)
@@ -173,6 +209,17 @@ class FirestoreRepo:
 
     def get_attachment(self, aid):
         return self._doc(self.db.collection("attachments").document(aid).get())
+
+    def delete_attachment(self, aid):
+        self.db.collection("attachments").document(aid).delete()
+
+    def attachment_ids_for_ticket(self, tid):
+        return [s.id for s in self._where("attachments", "ticket_id", tid).select(["ticket_id"]).stream()]
+
+    def tickets_due_for_purge(self, now):
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        q = self.db.collection("tickets").where(filter=FieldFilter("purge_after", "<=", now))
+        return [self._doc(s) for s in q.stream()]
 
 
 def make_repo(settings):

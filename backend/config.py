@@ -41,6 +41,7 @@ class Settings:
     tickets_per_window: int = 5
     rate_window_seconds: int = 600
     replies_per_minute: int = 30
+    image_sweep_seconds: int = 3600  # how often to look for images past their deletion date; 0 = off
 
     @classmethod
     def from_env(cls):
@@ -65,4 +66,5 @@ class Settings:
             tickets_per_window=int(os.getenv("TICKETS_PER_WINDOW", 5)),
             rate_window_seconds=int(os.getenv("RATE_WINDOW_SECONDS", 600)),
             replies_per_minute=int(os.getenv("REPLIES_PER_MINUTE", 30)),
+            image_sweep_seconds=int(os.getenv("IMAGE_SWEEP_SECONDS", 3600)),
         )

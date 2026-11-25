@@ -1,7 +1,8 @@
 // Admin page: urgency-sorted queue, filters, ticket detail with AI analysis, reply, field updates, user roles.
 import {
   $, CATEGORY, PRIORITY, STATUS, api, appendMessages, attachControls, busy, categoryChip, ctrlEnterToSend, displayName, fullTime, guard,
-  followBottom, h, icon, initShell, liveTicket, mergeMessages, priorityBadge, rememberSentImage, renderThread, renderTyping, setupDrawer, setupHeader,
+  deleteMessage, followBottom, h, icon, imageTimerNotice, imagesGone, initShell, lastUpdate, liveTicket, mergeMessages,
+  replaceMessages, syncMessages, priorityBadge, rememberSentImage, renderThread, renderTyping, setupDrawer, setupHeader,
   shortId, stagger, statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
@@ -85,7 +86,10 @@ function upsert(ticket) {
 let chat = null; // { id, messages, live } for the open ticket
 let opening = null;
 const scroller = () => $("#drawer-body");
-const ctxFor = t => ({ myUid: me.uid, ownerName: ownerName(t) });
+const ctxFor = t => ({
+  myUid: me.uid, ownerName: ownerName(t), isStaff: true, imagesGone: imagesGone(t),
+  onDelete: m => chat && deleteMessage(chat.id, m, chat.messages, $("#thread"), ctxFor(current || t)),
+});
 
 function stopChat() {
   chat?.live.stop();
@@ -114,13 +118,14 @@ function startChat(t, messages) {
   const list = [];
   mergeMessages(list, messages);
   renderThread($("#thread"), list, ctxFor(t));
-  const live = liveTicket(t.id, () => list.at(-1)?.created_at, data => {
+  const live = liveTicket(t.id, () => lastUpdate(list), data => {
     applyLive(data.ticket);
-    const fresh = mergeMessages(list, data.messages);
+    const { fresh, changed } = syncMessages(list, data.messages);
+    replaceMessages($("#thread"), changed, ctxFor(data.ticket));
     appendMessages($("#thread"), scroller(), fresh, ctxFor(data.ticket));
     chat.typing = data.typing || [];
     renderTyping($("#typing"), chat.typing, scroller());
-    return fresh.length > 0 || chat.typing.length > 0;
+    return fresh.length > 0 || changed.length > 0 || chat.typing.length > 0;
   });
   chat = { id: t.id, messages: list, live };
 }
@@ -222,6 +227,7 @@ function showTicket(t) {
     }
     parts.push(row);
   }
+  parts.push(imageTimerNotice(t));
   if (t.duplicate_count) {
     parts.push(h("div", { class: "notice warn" }, icon("layers"),
       h("span", {}, `${t.duplicate_count} other report${t.duplicate_count > 1 ? "s" : ""} linked to this ticket. This may be a wider incident.`)));

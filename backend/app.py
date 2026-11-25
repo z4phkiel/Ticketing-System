@@ -1,5 +1,7 @@
 """Flask JSON API: routes, CORS, and error handlers."""
 import logging
+import threading
+import time
 
 from flask import Flask, Response, current_app, g, jsonify, request
 from werkzeug.exceptions import HTTPException
@@ -28,6 +30,32 @@ def create_app(settings=None, repo=None, ai=None, verify_token=None):
         MAX_CONTENT_LENGTH=1536 * 1024,  # room for one compressed image (sent as base64) plus text
     )
 
+    # Render's free plan has no scheduled jobs, so expired images are cleaned up in the background
+    # at most once per interval, triggered by normal traffic. Reads already hide them on time.
+    sweep = {"next": 0.0, "lock": threading.Lock()}
+
+    @app.before_request
+    def sweep_expired_images():
+        if settings.image_sweep_seconds <= 0 or time.monotonic() < sweep["next"]:
+            return
+        if not sweep["lock"].acquire(blocking=False):
+            return
+        sweep["next"] = time.monotonic() + settings.image_sweep_seconds
+        repo = app.config["REPO"]
+
+        def run():
+            try:
+                removed = service.purge_closed_images(repo)
+                if removed:
+                    logging.info("Deleted %s images from tickets closed over %s days ago", removed,
+                                 service.IMAGE_RETENTION_DAYS)
+            except Exception:
+                logging.exception("Image cleanup failed")
+            finally:
+                sweep["lock"].release()
+
+        threading.Thread(target=run, daemon=True).start()
+
     @app.after_request
     def cors(res):
         origin = request.headers.get("Origin", "").rstrip("/")
@@ -35,7 +63,7 @@ def create_app(settings=None, repo=None, ai=None, verify_token=None):
             res.headers.update({
                 "Access-Control-Allow-Origin": origin,
                 "Access-Control-Allow-Headers": "Authorization, Content-Type",
-                "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+                "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
                 "Access-Control-Max-Age": "600",
                 "Vary": "Origin",
             })
@@ -66,6 +94,10 @@ def _view(t):
     return t if g.user["role"] == "admin" else service.user_view(t)
 
 
+def _messages(tid, since=None):
+    return service.visible_messages(_repo(), g.user, tid, since)
+
+
 def _json():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -91,7 +123,7 @@ def register_routes(app):
         current_app.config["LIMITER"].check(g.user["uid"])
         t = service.submit_ticket(_repo(), current_app.config["AI"], current_app.config["SETTINGS"],
                                   g.user, data.get("subject"), data.get("body"))
-        return {"ticket": service.user_view(t), "messages": _repo().list_messages(t["id"])}, 201
+        return {"ticket": service.user_view(t), "messages": _messages(t["id"])}, 201
 
     @app.get("/api/tickets")
     @role_required("user")
@@ -103,7 +135,7 @@ def register_routes(app):
     @role_required("user", "admin")
     def ticket_detail(tid):
         t = service.get_visible_ticket(_repo(), g.user, tid)
-        return {"ticket": _view(t), "messages": _repo().list_messages(tid)}
+        return {"ticket": _view(t), "messages": _messages(tid)}
 
     @app.get("/api/tickets/<tid>/messages")
     @role_required("user", "admin")
@@ -112,7 +144,7 @@ def register_routes(app):
         t = service.get_visible_ticket(_repo(), g.user, tid)
         since = service.overlap_since(request.args.get("since"))
         typing = current_app.config["TYPING"].active(tid, g.user["uid"])
-        return {"ticket": _view(t), "messages": _repo().list_messages(tid, since), "typing": typing}
+        return {"ticket": _view(t), "messages": _messages(tid, since), "typing": typing}
 
     @app.post("/api/tickets/<tid>/typing")
     @role_required("user", "admin")
@@ -135,7 +167,7 @@ def register_routes(app):
             current_app.config["IMAGE_LIMITER"].check(g.user["uid"])
         t = service.reply_ticket(_repo(), g.user, tid, data.get("body"), data.get("image"))
         current_app.config["TYPING"].clear(tid, g.user["uid"])
-        return {"ticket": _view(t), "messages": _repo().list_messages(tid)}
+        return {"ticket": _view(t), "messages": _messages(tid)}
 
     @app.get("/api/attachments/<aid>")
     @role_required("user", "admin")
@@ -147,11 +179,18 @@ def register_routes(app):
                             "Content-Disposition": "inline"})
         return res
 
+    @app.delete("/api/tickets/<tid>/messages/<mid>")
+    @role_required("user", "admin")
+    def delete_message(tid, mid):
+        """?scope=me hides it for you; ?scope=everyone erases it (your own messages, or any for staff)."""
+        m = service.delete_message(_repo(), g.user, tid, mid, request.args.get("scope", "me"))
+        return {"message": service.message_view(m) if m else None}
+
     @app.post("/api/tickets/<tid>/reopen")
     @role_required("user", "admin")
     def reopen(tid):
         t = service.reopen_ticket(_repo(), g.user, tid)
-        return {"ticket": service.user_view(t), "messages": _repo().list_messages(tid)}
+        return {"ticket": service.user_view(t), "messages": _messages(tid)}
 
     @app.get("/api/admin/tickets")
     @role_required("admin")
@@ -167,7 +206,7 @@ def register_routes(app):
     @role_required("admin")
     def admin_update(tid):
         t = service.admin_update(_repo(), g.user, tid, _json())
-        return {"ticket": t, "messages": _repo().list_messages(tid)}
+        return {"ticket": t, "messages": _messages(tid)}
 
     @app.get("/api/admin/users")
     @role_required("admin")

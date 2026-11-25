@@ -34,7 +34,8 @@ class FakeAI:
 
 @pytest.fixture
 def env():
-    settings = Settings(ai_api_key="test", data_store="memory", frontend_origins=["https://app.test"])
+    settings = Settings(ai_api_key="test", data_store="memory", frontend_origins=["https://app.test"],
+                        image_sweep_seconds=0)
     repo = MemoryRepo()
     fake = FakeAI()
     tokens_ = {"u1": {"uid": "u1", "email": "u1@test.com"}, "u2": {"uid": "u2", "email": "u2@test.com"},
@@ -314,3 +315,85 @@ def test_text_or_image_required(env):
     env["fake"].reply = ai_reply(can_auto_resolve=False)
     tid = submit(env).json["ticket"]["id"]
     assert env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "  "}).status_code == 400
+
+
+# deleting messages
+
+def _ticket_with_chat(env):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    tid = submit(env).json["ticket"]["id"]
+    env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "Staff note"})
+    res = env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "with pic", "image": image()})
+    return tid, res.json["messages"]
+
+
+def test_delete_for_me_only_hides_for_me(env):
+    tid, msgs = _ticket_with_chat(env)
+    staff_msg = next(m for m in msgs if m["body"] == "Staff note")
+    res = env["call"]("delete", f"/api/tickets/{tid}/messages/{staff_msg['id']}?scope=me", "u1")
+    assert res.status_code == 200
+    mine = env["call"]("get", f"/api/tickets/{tid}", "u1").json["messages"]
+    theirs = env["call"]("get", f"/api/tickets/{tid}", "a1").json["messages"]
+    assert staff_msg["id"] not in [m["id"] for m in mine]
+    assert staff_msg["id"] in [m["id"] for m in theirs]
+    assert all("hidden_for" not in m for m in theirs)  # the other side can't tell
+
+
+def test_delete_for_everyone_erases_text_and_image(env):
+    tid, msgs = _ticket_with_chat(env)
+    pic = msgs[-1]
+    aid = pic["attachment"]["id"]
+    since = msgs[-1]["updated_at"]
+    res = env["call"]("delete", f"/api/tickets/{tid}/messages/{pic['id']}?scope=everyone", "u1")
+    gone = res.json["message"]
+    assert gone["deleted"] and gone["body"] == "" and gone["attachment"] is None and not gone["removed_by_staff"]
+    assert env["call"]("get", f"/api/attachments/{aid}", "a1").status_code == 404
+    live = env["call"]("get", f"/api/tickets/{tid}/messages?since={since}", "a1").json["messages"]
+    assert any(m["id"] == pic["id"] and m["deleted"] for m in live)  # live updates pick up the change
+    again = env["call"]("delete", f"/api/tickets/{tid}/messages/{pic['id']}?scope=everyone", "u1")
+    assert again.status_code == 409
+
+
+def test_delete_for_everyone_permissions(env):
+    tid, msgs = _ticket_with_chat(env)
+    staff_msg = next(m for m in msgs if m["body"] == "Staff note")
+    system_msg = next(m for m in msgs if m["author_type"] == "system")
+    assert env["call"]("delete", f"/api/tickets/{tid}/messages/{staff_msg['id']}?scope=everyone", "u1").status_code == 403
+    assert env["call"]("delete", f"/api/tickets/{tid}/messages/{system_msg['id']}?scope=everyone", "u1").status_code == 403
+    assert env["call"]("delete", f"/api/tickets/{tid}/messages/{staff_msg['id']}?scope=me", "u2").status_code == 404
+    user_msg = next(m for m in msgs if m["author_type"] == "user")
+    res = env["call"]("delete", f"/api/tickets/{tid}/messages/{user_msg['id']}?scope=everyone", "a1")
+    assert res.status_code == 200 and res.json["message"]["removed_by_staff"] is True
+
+
+# images deleted 3 days after closing
+
+def test_closing_starts_image_timer_and_reopening_cancels(env):
+    tid, msgs = _ticket_with_chat(env)
+    t = env["call"]("patch", f"/api/admin/tickets/{tid}", "a1", {"status": "closed"}).json["ticket"]
+    assert t["closed_at"] and t["purge_after"] > t["closed_at"]
+    seen = env["call"]("get", f"/api/tickets/{tid}", "u1").json["ticket"]
+    assert seen["purge_after"] == t["purge_after"]  # the user is told when images go
+    t = env["call"]("patch", f"/api/admin/tickets/{tid}", "a1", {"status": "open"}).json["ticket"]
+    assert t["purge_after"] is None and t["closed_at"] is None
+
+
+def test_images_purged_after_three_days(env):
+    tid, msgs = _ticket_with_chat(env)
+    aid = msgs[-1]["attachment"]["id"]
+    env["call"]("patch", f"/api/admin/tickets/{tid}", "a1", {"status": "closed"})
+    repo = env["repo"]
+    assert service.purge_closed_images(repo) == 0  # not due yet
+    assert env["call"]("get", f"/api/attachments/{aid}", "u1").status_code == 200
+    due = repo.get_ticket(tid)["purge_after"]
+    repo.update_ticket(tid, {"purge_after": "2000-01-01T00:00:00+00:00"})  # pretend 3 days passed
+    assert env["call"]("get", f"/api/attachments/{aid}", "u1").status_code == 404  # hidden on time
+    assert service.purge_closed_images(repo) == 1 and not repo.attachments
+    assert repo.get_ticket(tid)["images_deleted"] is True and due
+
+
+def test_no_images_on_closed_ticket(env):
+    tid, _ = _ticket_with_chat(env)
+    env["call"]("patch", f"/api/admin/tickets/{tid}", "a1", {"status": "closed"})
+    res = env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "", "image": image()})
+    assert res.status_code == 409

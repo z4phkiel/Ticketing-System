@@ -1,7 +1,8 @@
 // User page: submit a ticket, list own tickets, view a conversation, reply, reopen.
 import {
   $, api, appendMessages, attachControls, busy, categoryChip, counter, displayName, ctrlEnterToSend, emptyState, fullTime, guard, h,
-  followBottom, icon, initShell, liveTicket, mergeMessages, rememberSentImage, renderThread, renderTyping, setupDrawer, setupHeader, shortId, stagger,
+  deleteMessage, followBottom, icon, imageTimerNotice, imagesGone, initShell, lastUpdate, liveTicket, mergeMessages,
+  replaceMessages, syncMessages, rememberSentImage, renderThread, renderTyping, setupDrawer, setupHeader, shortId, stagger,
   statusBadge, timeAgo, toast, typingBubble, typingNotifier, watchConnection,
 } from "./app.js";
 
@@ -111,7 +112,10 @@ form.addEventListener("submit", async e => {
 let chat = null; // { id, messages, live } for the open ticket
 let opening = null;
 const scroller = () => $(".drawer-body", drawer);
-const ctx = () => ({ myUid: me.uid, ownerName: displayName(me) });
+const ctx = () => ({
+  myUid: me.uid, ownerName: displayName(me), isStaff: false, imagesGone: imagesGone(current),
+  onDelete: m => chat && deleteMessage(chat.id, m, chat.messages, $("#thread"), ctx()),
+});
 
 function stopChat() {
   chat?.live.stop();
@@ -146,13 +150,14 @@ function showConversation(ticket, messages) {
   renderThread($("#thread"), list, ctx());
   if (!drawer.open) drawer.showModal();
   requestAnimationFrame(() => { scroller().scrollTop = scroller().scrollHeight; });
-  const live = liveTicket(ticket.id, () => list.at(-1)?.created_at, data => {
+  const live = liveTicket(ticket.id, () => lastUpdate(list), data => {
     applyTicket(data.ticket);
-    const fresh = mergeMessages(list, data.messages);
+    const { fresh, changed } = syncMessages(list, data.messages);
+    replaceMessages($("#thread"), changed, ctx());
     appendMessages($("#thread"), scroller(), fresh, ctx());
     const typing = data.typing || [];
     renderTyping($("#typing"), typing, scroller());
-    return fresh.length > 0 || typing.length > 0;
+    return fresh.length > 0 || changed.length > 0 || typing.length > 0;
   });
   chat = { id: ticket.id, messages: list, live };
 }
@@ -173,11 +178,12 @@ function applyTicket(ticket) {
     notices.push(h("div", { class: "notice ai" }, icon("sparkle"),
       h("span", {}, "This answer was written by AI from our IT help articles. If it didn't fix the problem, tell us and a technician will take over.")));
   }
+  notices.push(imageTimerNotice(ticket));
   if (ticket.already_tracked) {
     notices.push(h("div", { class: "notice" }, icon("link"),
       h("span", {}, "Others have reported this too. We're already tracking it and will update you here.")));
   }
-  $("#drawer-notice").replaceChildren(...notices);
+  $("#drawer-notice").replaceChildren(...notices.filter(Boolean));
   if (!prev || prev.status !== ticket.status) renderFooter(ticket, !!prev);
 }
 

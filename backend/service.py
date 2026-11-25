@@ -4,7 +4,7 @@ import binascii
 import threading
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from ai_service import CATEGORIES, AIError
 from duplicates import find_candidates
@@ -13,6 +13,7 @@ from repo import now_iso
 STATUSES = ("pending_ai", "ai_resolved", "open", "in_progress", "closed")
 QUEUES = ("billing", "technical", "account", "general")
 SUBJECT_LEN, BODY_LEN, REPLY_LEN = (3, 150), (10, 5000), (1, 5000)
+IMAGE_RETENTION_DAYS = 3  # images are deleted this long after a ticket is closed
 MAX_IMAGE_BYTES = 900_000  # stored in one Firestore document (1 MiB limit); the browser compresses first
 IMAGE_SIGNATURES = {
     "image/jpeg": lambda b: b[:3] == b"\xff\xd8\xff",
@@ -122,8 +123,22 @@ def display_name(user):
 
 
 def message(author_type, author_id, body, author_name=None):
+    ts = now_iso()  # updated_at changes on delete, so live updates can pick up edits to old messages
     return {"author_type": author_type, "author_id": author_id, "author_name": author_name,
-            "body": body, "created_at": now_iso()}
+            "body": body, "created_at": ts, "updated_at": ts}
+
+
+def message_view(m):
+    """A message as sent to the browser: never reveals who hid it, or who deleted it by id."""
+    out = {k: v for k, v in m.items() if k not in ("hidden_for", "deleted_by")}
+    if m.get("deleted"):
+        out["removed_by_staff"] = m.get("deleted_by") != m.get("author_id")
+    return out
+
+
+def visible_messages(repo, user, tid, since=None):
+    """Messages for this viewer: those they deleted for themselves are left out."""
+    return [message_view(m) for m in repo.list_messages(tid, since) if user["uid"] not in (m.get("hidden_for") or [])]
 
 
 def overlap_since(raw):
@@ -140,7 +155,8 @@ def overlap_since(raw):
 
 def user_view(t):
     """What a ticket owner may see: no AI internals, priority, or links to other tickets."""
-    keys = ("id", "subject", "body", "status", "category", "created_at", "updated_at")
+    keys = ("id", "subject", "body", "status", "category", "created_at", "updated_at",
+            "closed_at", "purge_after", "images_deleted")
     return {**{k: t.get(k) for k in keys}, "already_tracked": bool(t.get("duplicate_of"))}
 
 
@@ -241,6 +257,8 @@ def reply_ticket(repo, user, tid, body, image=None):
     is_owner = t["user_id"] == user["uid"]
     if is_owner and t["status"] == "closed":
         raise ServiceError("This ticket is closed. Please open a new ticket.", 409)
+    if image is not None and t["status"] == "closed":
+        raise ServiceError("Images can't be added to a closed ticket.", 409)
     attachment = None
     if image is not None:
         raw, ctype, (width, height) = decode_image(image)
@@ -248,6 +266,8 @@ def reply_ticket(repo, user, tid, body, image=None):
                                    "data": raw, "size": len(raw), "created_at": now_iso()})
         attachment = {"id": aid, "type": ctype, "width": width, "height": height}
     fields = {"updated_at": now_iso()}
+    if attachment:
+        fields["has_images"] = True
     if is_owner and t["status"] == "ai_resolved":
         fields["status"] = "open"  # a follow-up question needs a human
     elif not is_owner and t["status"] in ("open", "pending_ai"):
@@ -266,10 +286,54 @@ def get_attachment(repo, user, aid):
     if not a:
         raise ServiceError("Image not found.", 404)
     try:
-        get_visible_ticket(repo, user, a["ticket_id"])
+        t = get_visible_ticket(repo, user, a["ticket_id"])
     except ServiceError as exc:
         raise ServiceError("Image not found.", 404) from exc
+    if images_expired(t):  # enforced on read, even before the cleanup has removed the data
+        raise ServiceError("This image was deleted after the ticket was closed.", 404)
     return a
+
+
+def images_expired(t):
+    return bool(t.get("images_deleted") or (t.get("purge_after") and t["purge_after"] <= now_iso()))
+
+
+def purge_closed_images(repo, now=None):
+    """Deletes images of tickets closed for IMAGE_RETENTION_DAYS. Returns how many were removed."""
+    now = now or now_iso()
+    removed = 0
+    for t in repo.tickets_due_for_purge(now):
+        for aid in repo.attachment_ids_for_ticket(t["id"]):
+            repo.delete_attachment(aid)
+            removed += 1
+        repo.update_ticket(t["id"], {"images_deleted": True, "purge_after": None, "updated_at": now_iso()})
+    return removed
+
+
+def delete_message(repo, user, tid, mid, scope):
+    """scope 'me' hides the message for this person only; 'everyone' erases its text and image for all.
+    Everyone-deletes are allowed for your own messages, and for staff on any message."""
+    get_visible_ticket(repo, user, tid)
+    m = repo.get_message(tid, mid)
+    if not m or user["uid"] in (m.get("hidden_for") or []):
+        raise ServiceError("Message not found.", 404)
+    if scope == "me":
+        repo.hide_message(tid, mid, user["uid"])
+        return None
+    if scope != "everyone":
+        raise ServiceError("Choose who to delete the message for.")
+    if m.get("deleted"):
+        raise ServiceError("This message was already deleted.", 409)
+    if m.get("author_id") != user["uid"] and user["role"] != "admin":
+        raise ServiceError("You can only delete your own messages for everyone.", 403)
+    if m.get("attachment"):
+        repo.delete_attachment(m["attachment"]["id"])
+    ts = now_iso()
+    repo.update_message(tid, mid, {"body": "", "attachment": None, "deleted": True, "deleted_by": user["uid"],
+                                   "deleted_at": ts, "updated_at": ts})
+    repo.add_audit({"action": "message_delete", "ticket_id": tid, "message_id": mid, "by": user["uid"],
+                    "author": m.get("author_id"), "at": ts})
+    return repo.get_message(tid, mid)
 
 
 def admin_update(repo, admin, tid, changes):
@@ -308,6 +372,13 @@ def admin_update(repo, admin, tid, changes):
     fields = {k: v for k, v in fields.items() if v != t.get(k)}
     if not fields:
         return t
+    if fields.get("status") == "closed":  # start the image deletion timer
+        fields["closed_at"] = now_iso()
+        if t.get("has_images") and not t.get("images_deleted"):
+            due = datetime.now(timezone.utc) + timedelta(days=IMAGE_RETENTION_DAYS)
+            fields["purge_after"] = due.isoformat()
+    elif "status" in fields and t.get("status") == "closed":  # reopened: cancel the timer
+        fields.update(closed_at=None, purge_after=None)
     ai = t.get("ai") or {}
     if ai and any(k in fields and fields[k] != ai.get(k) for k in ("category", "priority")):
         fields["ai"] = {**ai, "overridden": True}

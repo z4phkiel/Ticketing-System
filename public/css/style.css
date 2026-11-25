@@ -273,6 +273,36 @@ textarea.input { min-height: 140px; resize: vertical; line-height: 1.5; }
 .attach-preview img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
 .attach-preview .btn-icon { margin-left: auto; }
 
+/* Deleting messages */
+.msg-del {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; margin: -6px -4px -6px 2px; padding: 0;
+  border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; opacity: 0;
+  transition: opacity var(--fast) var(--ease-out), background var(--fast) var(--ease-out), color var(--fast) var(--ease-out);
+}
+.msg:hover .msg-del, .msg:focus-within .msg-del { opacity: 1; }
+.msg-del:hover { background: #eef2f7; color: var(--danger); }
+@media (hover: none) { .msg-del { opacity: 0.7; width: 36px; height: 36px; margin: -10px -8px -10px 0; } }
+.bubble.deleted { display: flex; align-items: center; gap: 8px; font-style: italic; font-size: 0.9rem; color: var(--muted); background: transparent; border: 1px dashed var(--border-strong); }
+.msg.mine .bubble.deleted { background: transparent; color: var(--muted); border-color: var(--border-strong); }
+.msg.removing { opacity: 0; transform: scale(0.97); transition: opacity var(--fast) var(--ease-out), transform var(--fast) var(--ease-out); }
+.image-gone { display: inline-flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; background: #f1f5f9; color: var(--muted); font-size: 0.85rem; }
+.msg.mine .image-gone { background: rgb(255 255 255 / 0.18); color: #fff; }
+
+/* Delete confirmation: bottom sheet on phones, centred card on larger screens */
+.sheet {
+  margin: auto auto 0; width: 100%; max-width: 440px; padding: 0; border: 0; border-radius: 18px 18px 0 0;
+  background: var(--card); color: var(--fg); box-shadow: var(--shadow-lg);
+  opacity: 1; transform: none;
+  transition: opacity var(--base) var(--ease-out), transform var(--base) var(--ease-out), overlay var(--base) allow-discrete, display var(--base) allow-discrete;
+}
+.sheet:not([open]) { opacity: 0; transform: translateY(24px); }
+@starting-style { .sheet[open] { opacity: 0; transform: translateY(24px); } }
+.sheet::backdrop { background: rgb(15 23 42 / 0.45); }
+.sheet-inner { display: grid; gap: 10px; padding: 22px 20px calc(20px + env(safe-area-inset-bottom)); }
+.sheet-inner p { margin-bottom: 6px; }
+.sheet .btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+.sheet .btn-danger:hover { background: #b91c1c; }
+
 /* Images in the conversation */
 .bubble .text { display: block; }
 .bubble .shot-frame + .text { margin-top: 8px; }
@@ -422,6 +452,7 @@ details.section[open] > summary::after { transform: rotate(-135deg); }
   .container { padding: 28px 24px 64px; }
   .user-chip { display: inline-flex; }
   .user-table .hide-sm { display: table-cell; }
+  .sheet { margin: auto; border-radius: 18px; }
   .stats { grid-template-columns: repeat(4, 1fr); }
   .filters { grid-template-columns: 2fr 1fr 1fr 1fr; }
   .filters .grow { grid-column: auto; }

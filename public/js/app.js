@@ -36,7 +36,7 @@ export function icon(name, cls = "icon") {
   svg.setAttribute("class", cls);
   svg.setAttribute("aria-hidden", "true");
   const use = document.createElementNS(ns, "use");
-  use.setAttribute("href", `/icons/sprite.svg?v=2#${name}`);
+  use.setAttribute("href", `/icons/sprite.svg?v=3#${name}`);
   svg.append(use);
   return svg;
 }
@@ -241,24 +241,113 @@ export function messageEl(m, ctx, index = 0) {
   else if (m.author_type === "admin") who = [m.author_name || "IT support", h("span", { class: "ai-tag staff-tag" }, "IT support")];
   else who = [m.author_name || ctx.ownerName || "User"];
   const cls = mine ? "mine" : ["ai", "system"].includes(m.author_type) ? m.author_type : "agent";
-  return h("div", { class: `msg ${cls}`, style: index ? `animation-delay:${Math.min(index, 8) * 40}ms` : null },
-    h("div", { class: "who" }, ...who, h("time", { datetime: m.created_at, title: fullTime(m.created_at) }, `· ${timeAgo(m.created_at)}`)),
-    h("div", { class: `bubble${m.attachment && !m.body ? " image-only" : ""}` },
-      m.attachment ? attachmentEl(m.attachment) : null,
-      m.body ? h("span", { class: "text" }, m.body) : null));
+  let bubble;
+  if (m.deleted) {
+    const text = m.removed_by_staff ? "This message was removed by IT support" : mine ? "You deleted this message" : "This message was deleted";
+    bubble = h("div", { class: "bubble deleted" }, icon("trash", "icon icon-sm"), h("span", {}, text));
+  } else {
+    bubble = h("div", { class: `bubble${m.attachment && !m.body ? " image-only" : ""}` },
+      m.attachment ? (ctx.imagesGone ? imageGoneEl() : attachmentEl(m.attachment)) : null,
+      m.body ? h("span", { class: "text" }, m.body) : null);
+  }
+  const del = ctx.onDelete ? h("button", { class: "msg-del", type: "button", "aria-label": "Delete message", title: "Delete" }, icon("trash", "icon icon-sm")) : null;
+  del?.addEventListener("click", () => ctx.onDelete(m));
+  return h("div", { class: `msg ${cls}`, "data-id": m.id, style: index ? `animation-delay:${Math.min(index, 8) * 40}ms` : null },
+    h("div", { class: "who" }, ...who, h("time", { datetime: m.created_at, title: fullTime(m.created_at) }, `· ${timeAgo(m.created_at)}`), del),
+    bubble);
+}
+
+const imageGoneEl = () => h("span", { class: "image-gone" }, icon("image", "icon icon-sm"), "Image deleted after the ticket was closed");
+
+/** True once a closed ticket's images are past their deletion date. */
+export const imagesGone = t => !!(t?.images_deleted || (t?.purge_after && new Date(t.purge_after) <= new Date()));
+
+/** Notice about the 3-day image deletion timer on closed tickets. */
+export function imageTimerNotice(t) {
+  if (imagesGone(t)) {
+    return h("div", { class: "notice warn" }, icon("image"), h("span", {}, "Images in this conversation were deleted 3 days after the ticket was closed."));
+  }
+  if (t.status === "closed" && t.purge_after) {
+    return h("div", { class: "notice warn" }, icon("image"), h("span", {}, `This ticket is closed. Its images will be deleted on ${fullTime(t.purge_after)}.`));
+  }
+  return null;
 }
 
 export function renderThread(container, messages, ctx) {
   container.replaceChildren(...messages.map((m, i) => messageEl(m, ctx, i)));
 }
 
+const byTime = (a, b) => a.created_at.localeCompare(b.created_at);
+const stamp = m => m.updated_at || m.created_at;
+
+/** Merges incoming messages into list. Returns { fresh, changed }: new ones and edited ones (e.g. deleted). */
+export function syncMessages(list, incoming) {
+  const index = new Map(list.map((m, i) => [m.id, i]));
+  const fresh = [], changed = [];
+  for (const m of incoming) {
+    if (!index.has(m.id)) { fresh.push(m); list.push(m); }
+    else if (stamp(list[index.get(m.id)]) !== stamp(m)) { list[index.get(m.id)] = m; changed.push(m); }
+  }
+  list.sort(byTime);
+  return { fresh: fresh.sort(byTime), changed };
+}
+
 /** Adds messages not seen before (by id) to list; returns only the new ones, oldest first. */
-export function mergeMessages(list, incoming) {
-  const seen = new Set(list.map(m => m.id));
-  const fresh = incoming.filter(m => !seen.has(m.id));
-  list.push(...fresh);
-  list.sort((a, b) => a.created_at.localeCompare(b.created_at));
-  return fresh.sort((a, b) => a.created_at.localeCompare(b.created_at));
+export const mergeMessages = (list, incoming) => syncMessages(list, incoming).fresh;
+
+/** Newest change in the conversation, used to ask the server only for what changed since. */
+export const lastUpdate = list => list.reduce((max, m) => (stamp(m) > max ? stamp(m) : max), "") || undefined;
+
+/** Redraws messages that changed (for example, deleted for everyone by the other person). */
+export function replaceMessages(container, messages, ctx) {
+  for (const m of messages) container.querySelector(`.msg[data-id="${CSS.escape(m.id)}"]`)?.replaceWith(messageEl(m, ctx));
+}
+
+let deleteSheet = null;
+/** Asks "delete for me / for everyone". Resolves to "me", "everyone", or null. */
+function chooseDeleteScope(canEveryone) {
+  if (!deleteSheet) {
+    deleteSheet = h("dialog", { class: "sheet", "aria-labelledby": "sheet-title" },
+      h("form", { method: "dialog", class: "sheet-inner" },
+        h("h2", { id: "sheet-title" }, "Delete message?"),
+        h("p", { class: "muted small", id: "sheet-text" }),
+        h("button", { class: "btn btn-danger btn-block", value: "everyone", id: "delete-everyone" }, icon("trash"), "Delete for everyone"),
+        h("button", { class: "btn btn-secondary btn-block", value: "me" }, "Delete for me"),
+        h("button", { class: "btn btn-ghost btn-block", value: "" }, "Cancel")));
+    deleteSheet.addEventListener("click", e => { if (e.target === deleteSheet) deleteSheet.close(""); });
+    document.body.append(deleteSheet);
+  }
+  deleteSheet.querySelector("#delete-everyone").hidden = !canEveryone;
+  deleteSheet.querySelector("#sheet-text").textContent = canEveryone
+    ? "\"Delete for everyone\" removes the message and any image for everyone in this conversation. \"Delete for me\" only hides it from your view."
+    : "This hides the message from your view only. Others in the conversation will still see it.";
+  deleteSheet.returnValue = "";
+  deleteSheet.showModal();
+  return new Promise(resolve => deleteSheet.addEventListener("close", () => resolve(deleteSheet.returnValue || null), { once: true }));
+}
+
+/** Delete flow for one message: choose scope, call the API, update the conversation in place. */
+export async function deleteMessage(ticketId, m, list, container, ctx) {
+  const canEveryone = !m.deleted && (ctx.isStaff || m.author_id === ctx.myUid);
+  const scope = await chooseDeleteScope(canEveryone);
+  if (!scope) return;
+  try {
+    const data = await api(`/api/tickets/${encodeURIComponent(ticketId)}/messages/${encodeURIComponent(m.id)}?scope=${scope}`, { method: "DELETE" });
+    const el = container.querySelector(`.msg[data-id="${CSS.escape(m.id)}"]`);
+    const i = list.findIndex(x => x.id === m.id);
+    if (scope === "me") {
+      if (i > -1) list.splice(i, 1);
+      el?.classList.add("removing");
+      setTimeout(() => el?.remove(), 260);
+      toast("Message deleted for you.", "success");
+    } else {
+      if (i > -1) list[i] = data.message;
+      el?.replaceWith(messageEl(data.message, ctx));
+      toast("Message deleted for everyone.", "success");
+    }
+  } catch (err) {
+    toast(err.message, "error");
+  }
 }
 
 /** Appends new messages and follows them if the reader was already near the bottom (or forced). */
