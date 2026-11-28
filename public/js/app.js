@@ -240,13 +240,11 @@ function setupUserMenu(me) {
   const chip = $("#user-chip"), menu = $("#user-menu");
   if (!chip || !menu) return;
   // Notifications are for ticket owners (AI answers, IT replies); the module loads only when configured
+  const pushOffered = me?.role === "user" && !!config.VAPID_KEY;
   let push = null;
-  if (me?.role === "user" && config.VAPID_KEY) {
-    import("./push.js").then(async m => {
-      if (!(await m.pushAvailable())) return;
-      push = m;
-      m.refreshPush().catch(() => {});
-    }).catch(() => {});
+  if (pushOffered) {
+    import("./push.js").then(m => { push = m; m.refreshPush().catch(() => {}); })
+      .catch(() => { push = { failed: true }; });
   }
   const items = () => [...menu.querySelectorAll('[role^="menuitem"]')];
   const close = (refocus = false) => {
@@ -265,16 +263,22 @@ function setupUserMenu(me) {
       document.startViewTransition ? document.startViewTransition(apply) : apply(); // cross-fade the whole page
     });
     let notes = null;
-    if (push) {
-      notes = h("button", { class: "menu-item", type: "button", role: "menuitemcheckbox", "aria-checked": String(push.pushEnabled()) },
-        icon("bell"), "Notifications", h("span", { class: "switch", "aria-hidden": "true" }));
+    if (pushOffered) {
+      notes = h("button", { class: "menu-item", type: "button", role: "menuitemcheckbox",
+        "aria-checked": String(!!push?.pushEnabled?.()) },
+      icon("bell"), "Notifications", h("span", { class: "switch", "aria-hidden": "true" }));
       notes.addEventListener("click", async () => {
         const on = notes.getAttribute("aria-checked") !== "true";
+        if (!push?.enablePush) {
+          return toast(push?.failed ? "Notifications couldn't load. Check your connection and reload." : "One moment, then try again.", "info", 6000);
+        }
+        const why = on && await push.unsupportedReason();
+        if (why) return toast(why, "info", 9000); // explain instead of failing silently
         notes.disabled = true;
         try {
           await (on ? push.enablePush() : push.disablePush());
           notes.setAttribute("aria-checked", String(on));
-          toast(on ? "Notifications are on for this device." : "Notifications are off for this device.", "success");
+          toast(on ? "Notifications are on. A test notification is on its way." : "Notifications are off for this device.", "success");
         } catch (err) {
           toast(err.message || "Couldn't change notifications.", "error");
         } finally {

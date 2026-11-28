@@ -19,20 +19,26 @@ def fcm_sender(tokens, data):
             if not r.success and type(r.exception).__name__ in DEAD_TOKEN_ERRORS]
 
 
-def notify(sender, repo, uid, title, body, ticket_id):
-    """Notifies a user in the background, so a slow or failing push never delays or breaks the request."""
+def notify(sender, repo, uid, title, body, ticket_id=None, token=None, force=False):
+    """Notifies a user in the background, so a slow or failing push never delays or breaks the request.
+    token: send to that one device only. force: show it even while the app is open (test notification)."""
     if not sender:
         return
 
     def run():
         try:
-            tokens = (repo.get_user(uid) or {}).get("push_tokens") or []
+            tokens = [token] if token else (repo.get_user(uid) or {}).get("push_tokens") or []
             if not tokens:
                 return
-            dead = sender(tokens, {"title": title, "body": body, "tag": f"ticket-{ticket_id}",
-                                   "url": f"/tickets?ticket={ticket_id}"})
+            data = {"title": title, "body": body,
+                    "tag": f"ticket-{ticket_id}" if ticket_id else "push-test",
+                    "url": f"/tickets?ticket={ticket_id}" if ticket_id else "/tickets"}
+            if force:
+                data["force"] = "1"
+            dead = sender(tokens, data)
             if dead:
-                repo.update_user(uid, {"push_tokens": [t for t in tokens if t not in dead]})
+                current = (repo.get_user(uid) or {}).get("push_tokens") or []
+                repo.update_user(uid, {"push_tokens": [t for t in current if t not in dead]})
         except Exception:
             logging.exception("Push notification failed")
 

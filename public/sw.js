@@ -1,5 +1,5 @@
 // Service worker: caches the app shell only. API calls and ticket data are never cached.
-const SHELL = "shell-v22";
+const SHELL = "shell-v23";
 // Pages use clean URLs (no .html), matching firebase.json "cleanUrls"
 const FILES = ["/", "/tickets", "/admin", "/profile", "/offline",
   "/css/style.css", "/js/app.js", "/js/config.js", "/js/index.js", "/js/tickets.js", "/js/admin.js", "/js/profile.js", "/js/theme.js", "/js/push.js",
@@ -39,7 +39,8 @@ self.addEventListener("push", e => {
   try { payload = e.data ? e.data.json() : {}; } catch { /* not JSON: show the generic text */ }
   const d = payload.data || payload;
   e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(windows => {
-    if (windows.some(w => w.visibilityState === "visible")) return; // an open page already shows it live
+    // an open page already shows replies live; test notifications ("force") always show
+    if (d.force !== "1" && windows.some(w => w.visibilityState === "visible")) return;
     return self.registration.showNotification(d.title || "AI Support Desk", {
       body: d.body || "You have a new reply.", tag: d.tag, renotify: !!d.tag,
       icon: "/icons/icon-192.png", badge: "/icons/icon-192.png", data: { url: d.url || "/tickets" },

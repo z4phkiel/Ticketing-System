@@ -6,9 +6,20 @@ import * as config from "./config.js";
 
 const KEY = "pushToken"; // this device's token, so we can turn it off again (also on sign-out)
 
-export async function pushAvailable() {
-  return !!config.VAPID_KEY && "Notification" in window && "serviceWorker" in navigator
-    && await isSupported().catch(() => false);
+/** null when notifications can be turned on here, otherwise a sentence saying what to do. */
+export async function unsupportedReason() {
+  const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const installed = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (iOS && !installed) {
+    return "On iPhone and iPad, add this app to your Home Screen first (Share > Add to Home Screen), then open it from there.";
+  }
+  if (!("Notification" in window) || !("serviceWorker" in navigator) || !(await isSupported().catch(() => false))) {
+    return "This browser can't show notifications. On Android use Chrome; on iPhone use the Home Screen app.";
+  }
+  if (Notification.permission === "denied") {
+    return "Notifications are blocked for this site. Allow them in your browser's site settings, then try again.";
+  }
+  return null;
 }
 
 export const pushEnabled = () => Notification.permission === "granted" && !!localStorage.getItem(KEY);

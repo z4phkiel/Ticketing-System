@@ -551,10 +551,13 @@ def test_stuck_ticket_recovered(env):
 def test_push_on_ai_answer_and_staff_reply_only(env):
     env["call"]("get", "/api/me", "u1")
     assert env["call"]("post", "/api/push/subscribe", "u1", {"token": "device-token-" + "x" * 20}).status_code == 200
+    assert env["pushed"].wait(2)  # test notification to the new device, shown even with the app open
+    assert env["pushes"][-1][0] == ["device-token-" + "x" * 20] and env["pushes"][-1][1]["force"] == "1"
+    env["pushed"].clear()
     tid = submit(env).json["ticket"]["id"]  # default fake AI auto-answers
     assert env["pushed"].wait(2)
     tokens, data = env["pushes"][-1]
-    assert tokens == ["device-token-" + "x" * 20] and data["title"] == "Your ticket has an answer"
+    assert tokens == ["device-token-" + "x" * 20] and data["title"] == "Your ticket has an answer" and "force" not in data
     assert data["url"] == f"/tickets?ticket={tid}"
     env["pushed"].clear()
     env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "my own reply"})
@@ -578,6 +581,7 @@ def test_push_tokens_move_between_accounts_and_dead_ones_are_dropped(env):
     env["repo"].update_user("u1", {"push_tokens": ["dead-" + "z" * 20]})
     env["fake"].reply = ai_reply(can_auto_resolve=False)
     tid = submit(env).json["ticket"]["id"]
+    env["pushed"].clear()
     env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "hello"})
     assert env["pushed"].wait(2)
     for _ in range(20):

@@ -138,7 +138,11 @@ def register_routes(app):
     @role_required()
     def push_subscribe():
         """Turn on notifications for this device (an FCM token from the browser)."""
-        service.set_push_token(_repo(), g.user, _json().get("token"), True)
+        token = _json().get("token")
+        service.set_push_token(_repo(), g.user, token, True)
+        # proves delivery works end to end on this device, so it shows even with the app open
+        push.notify(current_app.config["PUSH"], _repo(), g.user["uid"], "Notifications are on",
+                    "You'll be notified here when the AI or IT support replies to your tickets.", token=token, force=True)
         return {"ok": True}
 
     @app.delete("/api/push/subscribe")
