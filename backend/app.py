@@ -6,19 +6,22 @@ import time
 from flask import Flask, Response, current_app, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
+import push
 import service
 from ai_service import AIService
 from auth import firebase_verifier, forget_user, role_required
 
 
-def _me(u):
-    return {"uid": u["uid"], "email": u.get("email"), "name": u.get("name"), "role": u.get("role"),
-            "avatar": u.get("avatar")}
 from config import Settings
 from repo import make_repo, now_iso
 
 
-def create_app(settings=None, repo=None, ai=None, verify_token=None):
+def _me(u):
+    return {"uid": u["uid"], "email": u.get("email"), "name": u.get("name"), "role": u.get("role"),
+            "avatar": u.get("avatar")}
+
+
+def create_app(settings=None, repo=None, ai=None, verify_token=None, push_sender=None):
     settings = settings or Settings.from_env()
     app = Flask(__name__)
     app.config.update(
@@ -31,31 +34,34 @@ def create_app(settings=None, repo=None, ai=None, verify_token=None):
                                           "You're sending messages too quickly. Please wait a moment."),
         IMAGE_LIMITER=service.RateLimiter(10, 600, "You're sending images too quickly. Please wait a few minutes."),
         TYPING=service.TypingTracker(),
+        # Firestore mode has Firebase credentials, so pushes go through FCM; the in-memory demo has none
+        PUSH=push_sender or (push.fcm_sender if settings.data_store == "firestore" else None),
         TYPING_LIMITER=service.RateLimiter(40, 60, "Too many typing updates."),
         MAX_CONTENT_LENGTH=1536 * 1024,  # room for one compressed image (sent as base64) plus text
     )
 
-    # Render's free plan has no scheduled jobs, so expired images are cleaned up in the background
-    # at most once per interval, triggered by normal traffic. Reads already hide them on time.
+    # Render's free plan has no scheduled jobs, so cleanup runs in the background at most once per
+    # interval, triggered by normal traffic: expired images (reads already hide them on time) and
+    # tickets left in AI review by a restart.
     sweep = {"next": 0.0, "lock": threading.Lock()}
 
     @app.before_request
-    def sweep_expired_images():
-        if settings.image_sweep_seconds <= 0 or time.monotonic() < sweep["next"]:
+    def background_sweep():
+        if settings.sweep_seconds <= 0 or time.monotonic() < sweep["next"]:
             return
         if not sweep["lock"].acquire(blocking=False):
             return
-        sweep["next"] = time.monotonic() + settings.image_sweep_seconds
+        sweep["next"] = time.monotonic() + settings.sweep_seconds
         repo = app.config["REPO"]
 
         def run():
             try:
                 removed = service.purge_closed_images(repo)
-                if removed:
-                    logging.info("Deleted %s images from tickets closed over %s days ago", removed,
-                                 service.IMAGE_RETENTION_DAYS)
+                recovered = service.recover_stuck_tickets(repo)
+                if removed or recovered:
+                    logging.info("Cleanup: deleted %s images, recovered %s stuck tickets", removed, recovered)
             except Exception:
-                logging.exception("Image cleanup failed")
+                logging.exception("Background cleanup failed")
             finally:
                 sweep["lock"].release()
 
@@ -128,6 +134,20 @@ def register_routes(app):
         forget_user(u["uid"])  # drop the cached profile so the change shows on the next request
         return _me(u)
 
+    @app.post("/api/push/subscribe")
+    @role_required()
+    def push_subscribe():
+        """Turn on notifications for this device (an FCM token from the browser)."""
+        service.set_push_token(_repo(), g.user, _json().get("token"), True)
+        return {"ok": True}
+
+    @app.delete("/api/push/subscribe")
+    @role_required()
+    def push_unsubscribe():
+        """Turn off notifications for this device (also called when signing out)."""
+        service.set_push_token(_repo(), g.user, _json().get("token"), False)
+        return {"ok": True}
+
     @app.post("/api/tickets")
     @role_required("user", "admin")
     def create_ticket():
@@ -135,6 +155,9 @@ def register_routes(app):
         current_app.config["LIMITER"].check(g.user["uid"])
         t = service.submit_ticket(_repo(), current_app.config["AI"], current_app.config["SETTINGS"],
                                   g.user, data.get("subject"), data.get("body"))
+        if t["status"] == "ai_resolved":
+            push.notify(current_app.config["PUSH"], _repo(), t["user_id"], "Your ticket has an answer",
+                        f"Our AI assistant answered \"{t['subject']}\"", t["id"])
         return {"ticket": service.user_view(t), "messages": _messages(t["id"])}, 201
 
     @app.get("/api/tickets")
@@ -184,6 +207,9 @@ def register_routes(app):
             current_app.config["IMAGE_LIMITER"].check(g.user["uid"])
         t = service.reply_ticket(_repo(), g.user, tid, data.get("body"), data.get("image"))
         current_app.config["TYPING"].clear(tid, g.user["uid"])
+        if t["user_id"] != g.user["uid"]:  # staff replied: tell the ticket owner
+            push.notify(current_app.config["PUSH"], _repo(), t["user_id"],
+                        f"{service.display_name(g.user)} from IT support replied", t["subject"], tid)
         return {"ticket": _view(t), "messages": _messages(tid)}
 
     @app.get("/api/attachments/<aid>")

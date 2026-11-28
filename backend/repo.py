@@ -49,10 +49,16 @@ class MemoryRepo:
     def update_ticket(self, tid, fields):
         self.tickets[tid].update(copy.deepcopy(fields))
 
-    def increment_duplicates(self, tid):
+    def increment_duplicates(self, tid, by=1):
         t = self.tickets.get(tid)
         if t:
-            t["duplicate_count"] = t.get("duplicate_count", 0) + 1
+            t["duplicate_count"] = max(0, t.get("duplicate_count", 0) + by)
+
+    def tickets_with_status(self, status):
+        return copy.deepcopy([t for t in self.tickets.values() if t.get("status") == status])
+
+    def users_with_push_token(self, token):
+        return copy.deepcopy([u for u in self.users.values() if token in (u.get("push_tokens") or [])])
 
     def tickets_for_user(self, uid):
         return copy.deepcopy([t for t in self.tickets.values() if t["user_id"] == uid])
@@ -172,8 +178,16 @@ class FirestoreRepo:
     def update_ticket(self, tid, fields):
         self.db.collection("tickets").document(tid).update(fields)
 
-    def increment_duplicates(self, tid):
-        self.db.collection("tickets").document(tid).update({"duplicate_count": self._fs.Increment(1)})
+    def increment_duplicates(self, tid, by=1):
+        self.db.collection("tickets").document(tid).update({"duplicate_count": self._fs.Increment(by)})
+
+    def tickets_with_status(self, status):
+        return [self._doc(s) for s in self._where("tickets", "status", status).stream()]
+
+    def users_with_push_token(self, token):
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        q = self.db.collection("users").where(filter=FieldFilter("push_tokens", "array_contains", token))
+        return [{**s.to_dict(), "uid": s.id} for s in q.stream()]
 
     def tickets_for_user(self, uid):
         return [self._doc(s) for s in self._where("tickets", "user_id", uid).stream()]

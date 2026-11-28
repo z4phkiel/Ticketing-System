@@ -244,7 +244,7 @@ AVATAR_URL = re.compile(r"data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+
 
 def public_user(u):
     """A user in lists: pictures are left out (they load separately, only where they are shown)."""
-    return {k: v for k, v in u.items() if k != "avatar"}
+    return {k: v for k, v in u.items() if k not in ("avatar", "push_tokens")}
 
 
 def visible_avatars(repo, viewer, uids):
@@ -317,8 +317,8 @@ def reply_ticket(repo, user, tid, body, image=None):
     is_owner = t["user_id"] == user["uid"]
     if is_owner and t["status"] == "closed":
         raise ServiceError("This ticket is closed. Please open a new ticket.", 409)
-    if image is not None and t["status"] == "closed":
-        raise ServiceError("Images can't be added to a closed ticket.", 409)
+    if image is not None and (t["status"] == "closed" or t.get("images_deleted")):
+        raise ServiceError("Images can't be added to this ticket anymore. Please open a new ticket.", 409)
     attachment = None
     if image is not None:
         raw, ctype, (width, height) = decode_image(image)
@@ -369,6 +369,39 @@ def purge_closed_images(repo, now=None):
         repo.update_ticket(t["id"], {"images_deleted": True, "purge_after": None, "updated_at": now_iso()})
         audit(repo, "images_deleted", "system", ticket_id=t["id"], ticket_subject=t.get("subject"))
     return removed
+
+
+STUCK_AFTER = timedelta(minutes=10)  # AI triage takes under a minute; longer means the server restarted mid-way
+
+
+def recover_stuck_tickets(repo, now=None):
+    """Moves tickets left in 'AI reviewing' (server restarted during triage) to the staff queue."""
+    cutoff = ((now or datetime.now(timezone.utc)) - STUCK_AFTER).isoformat()
+    recovered = 0
+    for t in repo.tickets_with_status("pending_ai"):
+        if t["updated_at"] > cutoff:
+            continue
+        ai = {**(t.get("ai") or {}), "overridden": False,
+              "error": "AI triage was interrupted (the server restarted), so defaults were used."}
+        repo.update_ticket(t["id"], {"status": "open", "ai": ai, "updated_at": now_iso()})
+        repo.add_message(t["id"], message("system", None, MSG_ESCALATED.format(queue=t.get("queue", "general"))))
+        audit(repo, "ticket_recovered", "system", ticket_id=t["id"], ticket_subject=t.get("subject"))
+        recovered += 1
+    return recovered
+
+
+def set_push_token(repo, user, token, subscribe):
+    """Turns notifications on or off for one device. A device belongs to one account at a time,
+    so subscribing removes the token from anyone else (for example after a shared device changes hands)."""
+    if not isinstance(token, str) or not 20 <= len(token) <= 4096:
+        raise ServiceError("Invalid notification token.")
+    for other in repo.users_with_push_token(token):
+        if other["uid"] != user["uid"]:
+            repo.update_user(other["uid"], {"push_tokens": [t for t in other["push_tokens"] if t != token]})
+    tokens = [t for t in (repo.get_user(user["uid"]) or {}).get("push_tokens") or [] if t != token]
+    if subscribe:
+        tokens = (tokens + [token])[-10:]  # newest 10 devices
+    repo.update_user(user["uid"], {"push_tokens": tokens})
 
 
 def delete_message(repo, user, tid, mid, scope):
@@ -427,12 +460,15 @@ def admin_update(repo, admin, tid, changes):
         if dup and (dup == tid or not repo.get_ticket(dup)):
             raise ServiceError("The original ticket was not found.")
         fields["duplicate_of"] = dup
-        if dup and dup != t.get("duplicate_of"):
-            repo.increment_duplicates(dup)
 
     fields = {k: v for k, v in fields.items() if v != t.get(k)}
     if not fields:
         return t
+    if "duplicate_of" in fields:  # move the "N other reports" count from the old original to the new one
+        if t.get("duplicate_of"):
+            repo.increment_duplicates(t["duplicate_of"], -1)
+        if fields["duplicate_of"]:
+            repo.increment_duplicates(fields["duplicate_of"])
     if fields.get("status") == "closed":  # start the image deletion timer
         fields["closed_at"] = now_iso()
         if t.get("has_images") and not t.get("images_deleted"):

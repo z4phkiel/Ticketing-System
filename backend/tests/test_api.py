@@ -10,7 +10,7 @@ from ai_service import AIError, AIService, parse_result  # noqa: E402
 from app import create_app  # noqa: E402
 from config import Settings  # noqa: E402
 from duplicates import find_candidates, jaccard, tokens  # noqa: E402
-from repo import MemoryRepo  # noqa: E402
+from repo import MemoryRepo, now_iso  # noqa: E402
 
 
 def ai_reply(**over):
@@ -35,7 +35,7 @@ class FakeAI:
 @pytest.fixture
 def env():
     settings = Settings(ai_api_key="test", data_store="memory", frontend_origins=["https://app.test"],
-                        image_sweep_seconds=0)
+                        sweep_seconds=0)
     repo = MemoryRepo()
     fake = FakeAI()
     tokens_ = {"u1": {"uid": "u1", "email": "u1@test.com"}, "u2": {"uid": "u2", "email": "u2@test.com"},
@@ -46,7 +46,16 @@ def env():
             raise ValueError("bad token")
         return tokens_[token]
 
-    app = create_app(settings, repo, AIService(settings, call=fake), verify)
+    pushes = []
+    import threading as _th
+    pushed = _th.Event()
+
+    def push_sender(tokens, data):  # fake FCM: records what would be sent; "dead" tokens are reported back
+        pushes.append((tokens, data))
+        pushed.set()
+        return [t for t in tokens if t.startswith("dead")]
+
+    app = create_app(settings, repo, AIService(settings, call=fake), verify, push_sender)
     repo.create_user("a1", {"email": "a1@test.com", "role": "admin", "created_at": "x"})
     client = app.test_client()
 
@@ -54,7 +63,7 @@ def env():
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         return getattr(client, method)(path, headers=headers, json=json)
 
-    return {"call": call, "repo": repo, "fake": fake, "settings": settings}
+    return {"call": call, "repo": repo, "fake": fake, "settings": settings, "pushes": pushes, "pushed": pushed}
 
 
 def submit(env, token="u1", subject="Payment card update", body="How do I change my credit card?"):
@@ -491,3 +500,89 @@ def test_chat_avatars_visibility(env):
     staff = env["call"]("get", "/api/avatars?uids=u1,u2", "a1").json["avatars"]
     assert staff == {"u1": pic, "u2": pic}
     assert env["call"]("get", "/api/avatars?uids=a1", None).status_code == 401
+
+
+# review fixes
+
+def test_no_images_after_images_were_deleted(env):
+    tid, _ = _ticket_with_chat(env)
+    env["call"]("patch", f"/api/admin/tickets/{tid}", "a1", {"status": "closed"})
+    env["repo"].update_ticket(tid, {"purge_after": "2000-01-01T00:00:00+00:00"})
+    service.purge_closed_images(env["repo"])
+    env["call"]("patch", f"/api/admin/tickets/{tid}", "a1", {"status": "open"})
+    res = env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "", "image": image()})
+    assert res.status_code == 409 and "new ticket" in res.json["error"]
+    assert env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "text still works"}).status_code == 200
+
+
+def test_duplicate_count_moves_with_the_link(env):
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    a = submit(env, subject="Printer jam A", body="Printer on floor 2 jams on every page").json["ticket"]["id"]
+    b = submit(env, "u2", "Wifi down B", "No wifi at all in the north wing today").json["ticket"]["id"]
+    c = submit(env, "u2", "Mouse broken C", "My mouse stopped clicking this morning").json["ticket"]["id"]
+    count = lambda tid: env["repo"].get_ticket(tid).get("duplicate_count", 0)  # noqa: E731
+    env["call"]("patch", f"/api/admin/tickets/{c}", "a1", {"duplicate_of": a})
+    assert (count(a), count(b)) == (1, 0)
+    env["call"]("patch", f"/api/admin/tickets/{c}", "a1", {"duplicate_of": b})
+    assert (count(a), count(b)) == (0, 1)
+    env["call"]("patch", f"/api/admin/tickets/{c}", "a1", {"duplicate_of": None})
+    assert (count(a), count(b)) == (0, 0)
+
+
+def test_stuck_ticket_recovered(env):
+    from datetime import datetime, timedelta, timezone
+    repo = env["repo"]
+    old = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    stuck = repo.create_ticket({"user_id": "u1", "subject": "Stuck one", "body": "x" * 20, "status": "pending_ai",
+                                "category": "general", "priority": 3, "queue": "general", "ai": {},
+                                "created_at": old, "updated_at": old})
+    fresh = repo.create_ticket({"user_id": "u1", "subject": "Fresh one", "body": "x" * 20, "status": "pending_ai",
+                                "category": "general", "priority": 3, "queue": "general", "ai": {},
+                                "created_at": now_iso(), "updated_at": now_iso()})
+    assert service.recover_stuck_tickets(repo) == 1
+    t = repo.get_ticket(stuck)
+    assert t["status"] == "open" and "interrupted" in t["ai"]["error"]
+    assert repo.list_messages(stuck)[-1]["author_type"] == "system"
+    assert repo.get_ticket(fresh)["status"] == "pending_ai"  # still being analyzed
+
+
+# push notifications
+
+def test_push_on_ai_answer_and_staff_reply_only(env):
+    env["call"]("get", "/api/me", "u1")
+    assert env["call"]("post", "/api/push/subscribe", "u1", {"token": "device-token-" + "x" * 20}).status_code == 200
+    tid = submit(env).json["ticket"]["id"]  # default fake AI auto-answers
+    assert env["pushed"].wait(2)
+    tokens, data = env["pushes"][-1]
+    assert tokens == ["device-token-" + "x" * 20] and data["title"] == "Your ticket has an answer"
+    assert data["url"] == f"/tickets?ticket={tid}"
+    env["pushed"].clear()
+    env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "my own reply"})
+    assert not env["pushed"].wait(0.3)  # no push for your own message
+    env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "Staff answer"})
+    assert env["pushed"].wait(2) and env["pushes"][-1][1]["title"] == "a1 from IT support replied"
+
+
+def test_push_tokens_move_between_accounts_and_dead_ones_are_dropped(env):
+    tok = "shared-device-" + "y" * 20
+    for who in ("u1", "u2"):
+        env["call"]("get", "/api/me", who)
+    env["call"]("post", "/api/push/subscribe", "u1", {"token": tok})
+    env["call"]("post", "/api/push/subscribe", "u2", {"token": tok})  # same browser, next person
+    assert env["repo"].get_user("u1")["push_tokens"] == [] and env["repo"].get_user("u2")["push_tokens"] == [tok]
+    env["call"]("delete", "/api/push/subscribe", "u2", {"token": tok})
+    assert env["repo"].get_user("u2")["push_tokens"] == []
+    assert env["call"]("post", "/api/push/subscribe", "u1", {"token": "short"}).status_code == 400
+    users = env["call"]("get", "/api/admin/users", "a1").json["users"]
+    assert all("push_tokens" not in u for u in users)
+    env["repo"].update_user("u1", {"push_tokens": ["dead-" + "z" * 20]})
+    env["fake"].reply = ai_reply(can_auto_resolve=False)
+    tid = submit(env).json["ticket"]["id"]
+    env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "hello"})
+    assert env["pushed"].wait(2)
+    for _ in range(20):
+        if env["repo"].get_user("u1")["push_tokens"] == []:
+            break
+        import time as _t
+        _t.sleep(0.05)
+    assert env["repo"].get_user("u1")["push_tokens"] == []

@@ -437,6 +437,7 @@ function describe(e) {
     case "role_change":
       return { text: `changed ${e.user_name || userName(e.user_id)}'s role`, details: [`${ROLE[e.before] || e.before} → ${ROLE[e.after] || e.after}`] };
     case "profile_update": return { text: "changed their username", details: [`${e.before?.name} → ${e.after?.name}`] };
+    case "ticket_recovered": return { text: "moved a ticket to the queue", details: ["AI triage was interrupted by a server restart"] };
     case "images_deleted": return { text: "deleted the images of a closed ticket", details: ["3 days after the ticket was closed"] };
     default: return { text: e.action.replace(/_/g, " "), details: [] };
   }

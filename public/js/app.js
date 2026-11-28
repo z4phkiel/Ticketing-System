@@ -2,8 +2,10 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
 import { firebaseConfig, API_BASE } from "./config.js";
+import * as config from "./config.js";
 
-export const auth = getAuth(initializeApp(firebaseConfig));
+export const firebaseApp = initializeApp(firebaseConfig);
+export const auth = getAuth(firebaseApp);
 
 /** Resolves once Firebase has restored (or not) the saved session. */
 export const authReady = new Promise(resolve => {
@@ -36,7 +38,7 @@ export function icon(name, cls = "icon") {
   svg.setAttribute("class", cls);
   svg.setAttribute("aria-hidden", "true");
   const use = document.createElementNS(ns, "use");
-  use.setAttribute("href", `/icons/sprite.svg?v=4#${name}`);
+  use.setAttribute("href", `/icons/sprite.svg?v=5#${name}`);
   svg.append(use);
   return svg;
 }
@@ -143,7 +145,9 @@ export async function guard(role) {
 
 export function registerServiceWorker() {
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
+    // Pages call this after the sign-in check, which can finish after "load" has already fired
+    const register = () => navigator.serviceWorker.register("/sw.js");
+    if (document.readyState === "complete") register(); else window.addEventListener("load", register);
     // When an updated service worker takes control, reload once to pick up the new files
     let reloaded = false;
     const hadController = !!navigator.serviceWorker.controller;
@@ -235,6 +239,15 @@ export function renderUserChip(me) {
 function setupUserMenu(me) {
   const chip = $("#user-chip"), menu = $("#user-menu");
   if (!chip || !menu) return;
+  // Notifications are for ticket owners (AI answers, IT replies); the module loads only when configured
+  let push = null;
+  if (me?.role === "user" && config.VAPID_KEY) {
+    import("./push.js").then(async m => {
+      if (!(await m.pushAvailable())) return;
+      push = m;
+      m.refreshPush().catch(() => {});
+    }).catch(() => {});
+  }
   const items = () => [...menu.querySelectorAll('[role^="menuitem"]')];
   const close = (refocus = false) => {
     menu.classList.remove("open");
@@ -251,6 +264,24 @@ function setupUserMenu(me) {
       const apply = () => window.setTheme?.(dark);
       document.startViewTransition ? document.startViewTransition(apply) : apply(); // cross-fade the whole page
     });
+    let notes = null;
+    if (push) {
+      notes = h("button", { class: "menu-item", type: "button", role: "menuitemcheckbox", "aria-checked": String(push.pushEnabled()) },
+        icon("bell"), "Notifications", h("span", { class: "switch", "aria-hidden": "true" }));
+      notes.addEventListener("click", async () => {
+        const on = notes.getAttribute("aria-checked") !== "true";
+        notes.disabled = true;
+        try {
+          await (on ? push.enablePush() : push.disablePush());
+          notes.setAttribute("aria-checked", String(on));
+          toast(on ? "Notifications are on for this device." : "Notifications are off for this device.", "success");
+        } catch (err) {
+          toast(err.message || "Couldn't change notifications.", "error");
+        } finally {
+          notes.disabled = false;
+        }
+      });
+    }
     const signOutItem = h("button", { class: "menu-item", type: "button", role: "menuitem" }, icon("logout"), "Sign out");
     signOutItem.addEventListener("click", () => { close(); confirmSignOut(me); });
     menu.replaceChildren(
@@ -259,6 +290,7 @@ function setupUserMenu(me) {
       h("a", { class: "menu-item", role: "menuitem", href: "/profile", "aria-current": location.pathname === "/profile" ? "page" : null },
         icon("user"), "Profile"),
       theme,
+      notes,
       h("hr"),
       signOutItem);
   };
@@ -304,6 +336,8 @@ async function confirmSignOut(me) {
     ],
   });
   if (choice !== "signout") return;
+  // a shared device must not keep getting the previous person's notifications
+  if (localStorage.getItem("pushToken")) await import("./push.js").then(m => m.disablePush()).catch(() => {});
   await signOut(auth);
   location.replace("/");
 }

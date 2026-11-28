@@ -289,4 +289,9 @@ watchConnection(online => {
   if (online && wasOffline) loadTickets();
   wasOffline = !online;
 });
-loadTickets();
+// A tapped notification opens /tickets?ticket=<id>, or messages an already open page
+loadTickets().then(() => {
+  const id = new URLSearchParams(location.search).get("ticket");
+  if (id) { history.replaceState(null, "", "/tickets"); openTicket(id); }
+});
+navigator.serviceWorker?.addEventListener("message", e => { if (e.data?.openTicket) openTicket(e.data.openTicket); });
