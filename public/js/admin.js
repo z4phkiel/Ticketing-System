@@ -203,7 +203,7 @@ function analysisCard(t) {
     card.append(h("div", { class: "notice error" }, `AI triage failed, so defaults were used (General, P3). ${ai.error}`));
     return card;
   }
-  card.append(
+  card.append(...[ // the reasoning line is optional; append would print "null"
     h("dl", { class: "kv" },
       h("div", {}, h("dt", {}, "Category"), h("dd", {}, CATEGORY[ai.category] || ai.category)),
       h("div", {}, h("dt", {}, "Priority"), h("dd", {}, `P${ai.priority} ${PRIORITY[ai.priority] || ""}`)),
@@ -213,7 +213,7 @@ function analysisCard(t) {
     ),
     ai.reasoning ? h("p", { class: "small" }, h("strong", {}, "Why: "), ai.reasoning) : null,
     h("p", { class: "muted small" }, `${ai.model}${ai.latency_ms ? ` · ${(ai.latency_ms / 1000).toFixed(1)}s` : ""}`),
-  );
+  ].filter(Boolean));
   if (ai.suggested_response && t.status !== "ai_resolved") {
     card.append(h("div", { class: "label" }, "Suggested reply (only visible to staff)"), h("div", { class: "draft" }, ai.suggested_response));
   }

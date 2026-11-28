@@ -19,6 +19,12 @@ def fcm_sender(tokens, data):
             if not r.success and type(r.exception).__name__ in DEAD_TOKEN_ERRORS]
 
 
+def preview(author, text, limit=180):
+    """Notification text: who wrote it, then the message (shortened), e.g. "alex.it (IT support): Try ..."."""
+    text = " ".join((text or "").split()) or "Sent an image."
+    return f"{author}: {text if len(text) <= limit else text[:limit - 1].rstrip() + '…'}"
+
+
 def notify(sender, repo, uid, title, body, ticket_id=None, token=None, force=False):
     """Notifies a user in the background, so a slow or failing push never delays or breaks the request.
     token: send to that one device only. force: show it even while the app is open (test notification)."""

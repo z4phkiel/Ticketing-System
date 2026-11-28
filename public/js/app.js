@@ -288,7 +288,7 @@ function setupUserMenu(me) {
     }
     const signOutItem = h("button", { class: "menu-item", type: "button", role: "menuitem" }, icon("logout"), "Sign out");
     signOutItem.addEventListener("click", () => { close(); confirmSignOut(me); });
-    menu.replaceChildren(
+    menu.replaceChildren(...[ // notes is null for staff; replaceChildren would print "null"
       h("div", { class: "menu-head" }, avatarEl(me),
         h("span", {}, h("strong", {}, displayName(me)), h("small", {}, me?.role === "admin" ? "IT staff" : "User"))),
       h("a", { class: "menu-item", role: "menuitem", href: "/profile", "aria-current": location.pathname === "/profile" ? "page" : null },
@@ -296,7 +296,7 @@ function setupUserMenu(me) {
       theme,
       notes,
       h("hr"),
-      signOutItem);
+      signOutItem].filter(Boolean));
   };
   chip.addEventListener("click", () => {
     if (menu.classList.contains("open")) return close();
@@ -454,12 +454,12 @@ export function choose({ title, text, lead, buttons }) {
     sheet.addEventListener("click", e => { if (e.target === sheet) sheet.close(""); });
     document.body.append(sheet);
   }
-  sheet.firstChild.replaceChildren(
-    lead || null,
+  sheet.firstChild.replaceChildren(...[ // lead is optional; replaceChildren would print "null"
+    lead,
     h("h2", { id: "sheet-title" }, title),
     h("p", { class: "muted small", id: "sheet-text" }, text || ""),
     ...buttons.map(b => h("button", { class: `btn btn-block${b.cls ? ` ${b.cls}` : ""}`, value: b.value, id: b.id, autofocus: b.autofocus },
-      b.icon ? icon(b.icon) : null, b.label)));
+      b.icon ? icon(b.icon) : null, b.label))].filter(Boolean));
   sheet.returnValue = "";
   sheet.showModal();
   return new Promise(resolve => sheet.addEventListener("close", () => resolve(sheet.returnValue || null), { once: true }));

@@ -160,8 +160,8 @@ def register_routes(app):
         t = service.submit_ticket(_repo(), current_app.config["AI"], current_app.config["SETTINGS"],
                                   g.user, data.get("subject"), data.get("body"))
         if t["status"] == "ai_resolved":
-            push.notify(current_app.config["PUSH"], _repo(), t["user_id"], "Your ticket has an answer",
-                        f"Our AI assistant answered \"{t['subject']}\"", t["id"])
+            push.notify(current_app.config["PUSH"], _repo(), t["user_id"], t["subject"],
+                        push.preview("AI assistant", t["ai"].get("suggested_response")), t["id"])
         return {"ticket": service.user_view(t), "messages": _messages(t["id"])}, 201
 
     @app.get("/api/tickets")
@@ -212,8 +212,8 @@ def register_routes(app):
         t = service.reply_ticket(_repo(), g.user, tid, data.get("body"), data.get("image"))
         current_app.config["TYPING"].clear(tid, g.user["uid"])
         if t["user_id"] != g.user["uid"]:  # staff replied: tell the ticket owner
-            push.notify(current_app.config["PUSH"], _repo(), t["user_id"],
-                        f"{service.display_name(g.user)} from IT support replied", t["subject"], tid)
+            push.notify(current_app.config["PUSH"], _repo(), t["user_id"], t["subject"],
+                        push.preview(f"{service.display_name(g.user)} (IT support)", data.get("body")), tid)
         return {"ticket": _view(t), "messages": _messages(tid)}
 
     @app.get("/api/attachments/<aid>")

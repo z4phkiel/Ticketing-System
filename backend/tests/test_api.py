@@ -557,13 +557,26 @@ def test_push_on_ai_answer_and_staff_reply_only(env):
     tid = submit(env).json["ticket"]["id"]  # default fake AI auto-answers
     assert env["pushed"].wait(2)
     tokens, data = env["pushes"][-1]
-    assert tokens == ["device-token-" + "x" * 20] and data["title"] == "Your ticket has an answer" and "force" not in data
+    assert tokens == ["device-token-" + "x" * 20] and "force" not in data
+    assert data["title"] == "Payment card update" and data["body"] == "AI assistant: Go to Settings > Billing."
     assert data["url"] == f"/tickets?ticket={tid}"
     env["pushed"].clear()
     env["call"]("post", f"/api/tickets/{tid}/reply", "u1", {"body": "my own reply"})
     assert not env["pushed"].wait(0.3)  # no push for your own message
     env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "Staff answer"})
-    assert env["pushed"].wait(2) and env["pushes"][-1][1]["title"] == "a1 from IT support replied"
+    assert env["pushed"].wait(2)
+    assert env["pushes"][-1][1]["title"] == "Payment card update"
+    assert env["pushes"][-1][1]["body"] == "a1 (IT support): Staff answer"
+    env["pushed"].clear()
+    env["call"]("post", f"/api/tickets/{tid}/reply", "a1", {"body": "", "image": image()})
+    assert env["pushed"].wait(2) and env["pushes"][-1][1]["body"] == "a1 (IT support): Sent an image."
+
+
+def test_push_preview_is_shortened():
+    import push
+    text = push.preview("a1 (IT support)", "word " * 100)
+    assert len(text) <= len("a1 (IT support): ") + 180 and text.endswith("…")
+    assert push.preview("AI assistant", "Line one\n\nLine two") == "AI assistant: Line one Line two"
 
 
 def test_push_tokens_move_between_accounts_and_dead_ones_are_dropped(env):
