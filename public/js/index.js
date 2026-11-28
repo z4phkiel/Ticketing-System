@@ -2,7 +2,7 @@
 import {
   createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, updateProfile,
 } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
-import { $, api, auth, authReady, busy, homeFor, initShell, toast, watchConnection } from "./app.js";
+import { $, api, auth, authReady, busy, homeFor, initShell, switchTheme, toast, watchConnection } from "./app.js";
 
 const form = $("#auth-form");
 const tabs = $(".tabs");
@@ -98,6 +98,13 @@ $("#forgot-btn").addEventListener("click", async () => {
 });
 
 initShell();
+
+// Dark mode toggle (same saved setting as the switch in the account menu)
+const themeBtn = $("#theme-toggle");
+const showTheme = () => themeBtn.setAttribute("aria-pressed", String(document.documentElement.dataset.theme === "dark"));
+showTheme();
+document.addEventListener("themechange", showTheme);
+themeBtn.addEventListener("click", () => switchTheme(document.documentElement.dataset.theme !== "dark"));
 watchConnection();
 
 // Already signed in: skip the form.

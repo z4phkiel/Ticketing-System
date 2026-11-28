@@ -38,7 +38,7 @@ export function icon(name, cls = "icon") {
   svg.setAttribute("class", cls);
   svg.setAttribute("aria-hidden", "true");
   const use = document.createElementNS(ns, "use");
-  use.setAttribute("href", `/icons/sprite.svg?v=5#${name}`);
+  use.setAttribute("href", `/icons/sprite.svg?v=6#${name}`);
   svg.append(use);
   return svg;
 }
@@ -227,6 +227,12 @@ async function loadAvatars(messages, root) {
   });
 }
 
+/** Switches light/dark (saved on this device, shared by the account menu and the login page). */
+export function switchTheme(dark) {
+  const apply = () => window.setTheme?.(dark);
+  document.startViewTransition ? document.startViewTransition(apply) : apply(); // cross-fade the whole page
+}
+
 /** Header account button (avatar + username). Call again after the profile changes. */
 export function renderUserChip(me) {
   const chip = $("#user-chip");
@@ -259,8 +265,7 @@ function setupUserMenu(me) {
     theme.addEventListener("click", () => {
       const dark = theme.getAttribute("aria-checked") !== "true";
       theme.setAttribute("aria-checked", String(dark));
-      const apply = () => window.setTheme?.(dark);
-      document.startViewTransition ? document.startViewTransition(apply) : apply(); // cross-fade the whole page
+      switchTheme(dark);
     });
     let notes = null;
     if (pushOffered) {

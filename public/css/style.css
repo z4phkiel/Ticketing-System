@@ -465,6 +465,19 @@ textarea.input { min-height: 140px; resize: vertical; line-height: 1.5; }
 .toast.error .icon { color: #fca5a5; }
 .toast.ai .icon { color: #c4b5fd; }
 
+/* Login page dark mode toggle: moon in light mode, sun in dark mode */
+.theme-toggle {
+  position: fixed; z-index: 10; top: calc(12px + env(safe-area-inset-top)); right: 12px;
+  width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border-radius: 50%; cursor: pointer;
+  background: var(--card); color: var(--fg-2); border: 1px solid var(--border); box-shadow: var(--shadow);
+  transition: background var(--fast) var(--ease-out), transform var(--fast) var(--ease-out);
+}
+.theme-toggle:hover { background: var(--surface-2); }
+.theme-toggle:active { transform: scale(0.94); }
+.theme-toggle .icon { grid-area: 1 / 1; transition: opacity var(--slow) var(--ease-out), transform var(--slow) var(--ease-out); }
+.theme-toggle .sun, [aria-pressed="true"].theme-toggle .moon { opacity: 0; transform: rotate(-90deg) scale(0.6); }
+[aria-pressed="true"].theme-toggle .sun { opacity: 1; transform: none; }
+
 /* Auth page */
 .auth-page { min-height: 100dvh; display: grid; grid-template-rows: auto 1fr; } /* header keeps its height; the form area takes the rest */
 .auth-hero {

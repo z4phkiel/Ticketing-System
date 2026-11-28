@@ -7,8 +7,11 @@
   const apply = dark => {
     root.dataset.theme = dark ? "dark" : "light";
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0B1220" : "#2563EB");
+    document.dispatchEvent(new CustomEvent("themechange", { detail: { dark } }));
   };
   apply(saved() ? saved() === "dark" : media.matches);
   media.addEventListener("change", e => { if (!saved()) apply(e.matches); });
+  // another tab switched the theme: follow it
+  window.addEventListener("storage", e => { if (e.key === "theme") apply(e.newValue ? e.newValue === "dark" : media.matches); });
   window.setTheme = dark => { localStorage.setItem("theme", dark ? "dark" : "light"); apply(dark); };
 })();

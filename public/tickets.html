@@ -18,18 +18,18 @@
 <body>
   <header class="app-header">
     <a class="brand" href="/tickets">
-      <svg aria-hidden="true"><use href="/icons/sprite.svg?v=5#logo"/></svg>
+      <svg aria-hidden="true"><use href="/icons/sprite.svg?v=6#logo"/></svg>
       <span>AI Support Desk<small>IT help desk</small></span>
     </a>
     <div class="header-actions">
       <button class="btn btn-secondary" id="install-btn" type="button" hidden>
-        <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=5#download"/></svg><span>Install app</span></button>
+        <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=6#download"/></svg><span>Install app</span></button>
       <div class="user-menu">
         <button class="user-chip" id="user-chip" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu"></button>
         <div class="menu" id="user-menu" role="menu" aria-label="Account"></div>
       </div>
       <button class="btn btn-ghost btn-icon" id="signout-btn" type="button" aria-label="Sign out" title="Sign out">
-        <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=5#logout"/></svg></button>
+        <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=6#logout"/></svg></button>
     </div>
   </header>
 
@@ -45,7 +45,7 @@
       <section class="card card-pad compose" aria-labelledby="new-ticket-title">
         <div class="card-head">
           <h2 id="new-ticket-title">New ticket</h2>
-          <span class="badge no-dot status-pending_ai"><svg class="icon icon-sm" aria-hidden="true"><use href="/icons/sprite.svg?v=5#sparkle"/></svg>AI-assisted</span>
+          <span class="badge no-dot status-pending_ai"><svg class="icon icon-sm" aria-hidden="true"><use href="/icons/sprite.svg?v=6#sparkle"/></svg>AI-assisted</span>
         </div>
         <form id="ticket-form" novalidate>
           <div class="field">
@@ -60,10 +60,10 @@
           </div>
           <p class="form-error" id="ticket-error" role="alert"></p>
           <button class="btn btn-block" id="ticket-submit" type="submit" data-needs-online disabled>
-            <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=5#send"/></svg><span>Submit ticket</span></button>
+            <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=6#send"/></svg><span>Submit ticket</span></button>
         </form>
         <div class="analyzing" id="analyzing" hidden aria-live="polite">
-          <div class="ai-orb"><svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=5#sparkle"/></svg></div>
+          <div class="ai-orb"><svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=6#sparkle"/></svg></div>
           <p class="step" id="analyzing-step">Reading your ticket…</p>
           <div class="steps-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
           <p class="muted small">This usually takes a few seconds.</p>
@@ -74,7 +74,7 @@
         <div class="card-head">
           <h2 id="list-title">Your tickets</h2>
           <button class="btn btn-ghost btn-icon" id="refresh-btn" type="button" aria-label="Refresh tickets" title="Refresh">
-            <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=5#refresh"/></svg></button>
+            <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=6#refresh"/></svg></button>
         </div>
         <ul class="ticket-list" id="ticket-list" aria-busy="true">
           <li class="skeleton line"></li><li class="skeleton line"></li><li class="skeleton line"></li>
@@ -92,7 +92,7 @@
           <div class="badges" id="drawer-badges"></div>
         </div>
         <button class="btn btn-ghost btn-icon" type="button" data-close aria-label="Close">
-          <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=5#x"/></svg></button>
+          <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=6#x"/></svg></button>
       </header>
       <div class="drawer-body">
         <div id="drawer-notice"></div>
