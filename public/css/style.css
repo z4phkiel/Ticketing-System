@@ -177,6 +177,7 @@ textarea.input { min-height: 140px; resize: vertical; line-height: 1.5; }
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; animation: fade-in var(--base) var(--ease-out); }
 .avatar.xl { width: 96px; height: 96px; font-size: 2.2rem; }
+.avatar.sm { width: 20px; height: 20px; font-size: 0.62rem; }
 
 /* Account menu: drops down from the account button */
 .menu {

@@ -197,8 +197,30 @@ export function setupInstall() {
 
 /** Round avatar: the profile picture if one is set, otherwise the username's first letter. */
 export function avatarEl(u, cls = "") {
-  return h("span", { class: `avatar${cls ? ` ${cls}` : ""}`, "aria-hidden": "true" },
+  return h("span", { class: `avatar${cls ? ` ${cls}` : ""}`, "aria-hidden": "true", "data-uid": u?.uid },
     u?.avatar ? h("img", { src: u.avatar, alt: "" }) : displayName(u)[0].toUpperCase());
+}
+
+// Profile pictures of message authors, kept in memory only: uid -> data URL, or null for none.
+const avatars = new Map();
+
+/** Fetches pictures for authors not seen yet, then fills in their avatars inside root. */
+async function loadAvatars(messages, root) {
+  const need = [...new Set(messages.filter(m => m.author_id && !avatars.has(m.author_id)).map(m => m.author_id))];
+  if (need.length) {
+    need.forEach(uid => avatars.set(uid, null)); // one request per author, even if several renders overlap
+    try {
+      const data = await api(`/api/avatars?uids=${encodeURIComponent(need.join(","))}`);
+      need.forEach(uid => avatars.set(uid, data.avatars[uid] || null));
+    } catch {
+      need.forEach(uid => avatars.delete(uid)); // try again on the next render
+      return;
+    }
+  }
+  root.querySelectorAll(".avatar[data-uid]").forEach(el => {
+    const url = avatars.get(el.dataset.uid);
+    if (url && el.querySelector("img")?.getAttribute("src") !== url) el.replaceChildren(h("img", { src: url, alt: "" }));
+  });
 }
 
 /** Header account button (avatar + username). Call again after the profile changes. */
@@ -263,6 +285,7 @@ function setupUserMenu(me) {
 
 /** Header account menu and sign-out. Signing out clears in-memory data by leaving the page. */
 export function setupHeader(me) {
+  if (me?.uid) avatars.set(me.uid, me.avatar || null); // your own messages use your current picture
   renderUserChip(me);
   setupUserMenu(me);
   $("#signout-btn")?.addEventListener("click", () => confirmSignOut(me));
@@ -326,8 +349,10 @@ export function messageEl(m, ctx, index = 0) {
   }
   const del = ctx.onDelete ? h("button", { class: "msg-del", type: "button", "aria-label": "Delete message", title: "Delete" }, icon("trash", "icon icon-sm")) : null;
   del?.addEventListener("click", () => ctx.onDelete(m));
+  const person = m.author_id && ["user", "admin"].includes(m.author_type)
+    ? avatarEl({ uid: m.author_id, name: who[0] === "You" ? m.author_name || "You" : who[0], avatar: avatars.get(m.author_id) }, "sm") : null;
   return h("div", { class: `msg ${cls}`, "data-id": m.id, style: index ? `animation-delay:${Math.min(index, 8) * 40}ms` : null },
-    h("div", { class: "who" }, ...who, h("time", { datetime: m.created_at, title: fullTime(m.created_at) }, `· ${timeAgo(m.created_at)}`), del),
+    h("div", { class: "who" }, person, ...who, h("time", { datetime: m.created_at, title: fullTime(m.created_at) }, `· ${timeAgo(m.created_at)}`), del),
     bubble);
 }
 
@@ -349,6 +374,7 @@ export function imageTimerNotice(t) {
 
 export function renderThread(container, messages, ctx) {
   container.replaceChildren(...messages.map((m, i) => messageEl(m, ctx, i)));
+  loadAvatars(messages, container);
 }
 
 const byTime = (a, b) => a.created_at.localeCompare(b.created_at);
@@ -472,6 +498,7 @@ export function appendMessages(container, scroller, messages, ctx, force = false
   if (!messages.length) return;
   const nearBottom = isAtBottom(scroller, 160);
   container.append(...messages.map(m => messageEl(m, ctx)));
+  loadAvatars(messages, container);
   if (nearBottom || force) requestAnimationFrame(() => scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" }));
 }
 

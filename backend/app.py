@@ -228,6 +228,13 @@ def register_routes(app):
         t = service.admin_update(_repo(), g.user, tid, _json())
         return {"ticket": t, "messages": _messages(tid)}
 
+    @app.get("/api/avatars")
+    @role_required("user", "admin")
+    def avatars():
+        """?uids=a,b,c -> profile pictures of message authors in an open conversation."""
+        uids = list(dict.fromkeys(u for u in request.args.get("uids", "").split(",") if u))[:50]
+        return {"avatars": service.visible_avatars(_repo(), g.user, uids)}
+
     @app.get("/api/admin/activity")
     @role_required("admin")
     def admin_activity():

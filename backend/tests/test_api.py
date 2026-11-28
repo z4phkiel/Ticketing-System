@@ -479,3 +479,15 @@ def test_update_username_and_avatar(env):
 def test_bad_profile_updates_rejected(env, bad):
     assert env["call"]("patch", "/api/me", "u1", bad).status_code == 400
     assert env["call"]("patch", "/api/me", None, {"name": "valid_name"}).status_code == 401
+
+
+def test_chat_avatars_visibility(env):
+    pic = "data:image/png;base64," + _b64.b64encode(PNG).decode()
+    for token in ("u1", "u2", "a1"):
+        env["call"]("get", "/api/me", token)
+        env["call"]("patch", "/api/me", token, {"avatar": pic})
+    seen = env["call"]("get", "/api/avatars?uids=a1,u1,u2,nobody", "u1").json["avatars"]
+    assert seen == {"a1": pic, "u1": pic, "u2": None, "nobody": None}  # staff and self, not other users
+    staff = env["call"]("get", "/api/avatars?uids=u1,u2", "a1").json["avatars"]
+    assert staff == {"u1": pic, "u2": pic}
+    assert env["call"]("get", "/api/avatars?uids=a1", None).status_code == 401

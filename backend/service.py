@@ -243,8 +243,19 @@ AVATAR_URL = re.compile(r"data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+
 
 
 def public_user(u):
-    """A user as other people see it: the profile picture is only ever sent to its owner."""
+    """A user in lists: pictures are left out (they load separately, only where they are shown)."""
     return {k: v for k, v in u.items() if k != "avatar"}
+
+
+def visible_avatars(repo, viewer, uids):
+    """Profile pictures for chat messages. Users chat only with IT staff, so they may see staff
+    pictures and their own; staff may see everyone's. Anything else comes back as None."""
+    out = {}
+    for uid in uids:
+        u = viewer if uid == viewer["uid"] else repo.get_user(uid)
+        allowed = u and (uid == viewer["uid"] or viewer.get("role") == "admin" or u.get("role") == "admin")
+        out[uid] = u.get("avatar") if allowed else None
+    return out
 
 
 def update_profile(repo, user, changes):
