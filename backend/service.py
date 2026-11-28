@@ -1,6 +1,7 @@
 """Ticket logic: submission with AI triage, decision rules, replies, reopen, admin updates."""
 import base64
 import binascii
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -234,6 +235,42 @@ def reopen_ticket(repo, user, tid):
     repo.add_message(tid, message("system", None, MSG_REOPENED))
     audit(repo, "reopen", user, ticket_id=tid, ticket_subject=t["subject"])
     return repo.get_ticket(tid)
+
+
+USERNAME = re.compile(r"[A-Za-z0-9._-]{3,30}")  # same rule as the sign-up form
+MAX_AVATAR_BYTES = 100_000  # the browser sends a 256 px JPEG of about 20 KB
+AVATAR_URL = re.compile(r"data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)")
+
+
+def public_user(u):
+    """A user as other people see it: the profile picture is only ever sent to its owner."""
+    return {k: v for k, v in u.items() if k != "avatar"}
+
+
+def update_profile(repo, user, changes):
+    """Change your own username and/or profile picture (a data URL, or null to remove it)."""
+    fields = {}
+    if "name" in changes:
+        name = changes["name"].strip() if isinstance(changes["name"], str) else ""
+        if not USERNAME.fullmatch(name):
+            raise ServiceError("Username must be 3-30 characters: letters, numbers, dots, dashes, or underscores.")
+        fields["name"] = name
+    if "avatar" in changes:
+        value = changes["avatar"]
+        if value:
+            m = AVATAR_URL.fullmatch(value) if isinstance(value, str) else None
+            if not m:
+                raise ServiceError("Invalid profile picture.")
+            raw, _, _ = decode_image({"type": m[1], "data": m[2]})  # checks it is a real image
+            if len(raw) > MAX_AVATAR_BYTES:
+                raise ServiceError("That profile picture is too large.")
+        fields["avatar"] = value or None
+    if not fields:
+        raise ServiceError("Nothing to update.")
+    repo.update_user(user["uid"], fields)
+    if "name" in fields and fields["name"] != user.get("name"):
+        audit(repo, "profile_update", user, before={"name": user.get("name")}, after={"name": fields["name"]})
+    return {**user, **fields}
 
 
 def decode_image(image):

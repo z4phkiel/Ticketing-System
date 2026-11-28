@@ -1,9 +1,9 @@
 // Service worker: caches the app shell only. API calls and ticket data are never cached.
-const SHELL = "shell-v18";
+const SHELL = "shell-v19";
 // Pages use clean URLs (no .html), matching firebase.json "cleanUrls"
-const FILES = ["/", "/tickets", "/admin", "/offline",
-  "/css/style.css", "/js/app.js", "/js/config.js", "/js/index.js", "/js/tickets.js", "/js/admin.js",
-  "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/sprite.svg?v=3"]; // bump ?v= here and in the pages when icons change
+const FILES = ["/", "/tickets", "/admin", "/profile", "/offline",
+  "/css/style.css", "/js/app.js", "/js/config.js", "/js/index.js", "/js/tickets.js", "/js/admin.js", "/js/profile.js", "/js/theme.js",
+  "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/sprite.svg?v=4"]; // bump ?v= here and in the pages when icons change
 const RUNTIME_HOSTS = ["www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com"];
 
 // cache: "reload" skips the browser's HTTP cache so a new version never stores old files

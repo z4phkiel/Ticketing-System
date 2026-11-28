@@ -450,3 +450,32 @@ def test_activity_log_names_who_did_what(env):
     older = env["call"]("get", f"/api/admin/activity?before={newest}&limit=1", "a1").json
     assert len(older["entries"]) == 1 and older["more"] is True
     assert env["call"]("get", "/api/admin/activity", "u1").status_code == 403
+
+
+# profile page
+
+def test_update_username_and_avatar(env):
+    env["call"]("get", "/api/me", "u1")
+    res = env["call"]("patch", "/api/me", "u1", {"name": "maria.s"})
+    assert res.status_code == 200 and res.json["name"] == "maria.s"
+    assert env["call"]("get", "/api/me", "u1").json["name"] == "maria.s"  # cache was refreshed
+    pic = "data:image/png;base64," + _b64.b64encode(PNG).decode()
+    assert env["call"]("patch", "/api/me", "u1", {"avatar": pic}).json["avatar"] == pic
+    assert env["call"]("get", "/api/me", "u1").json["avatar"] == pic
+    users = env["call"]("get", "/api/admin/users", "a1").json["users"]
+    assert all("avatar" not in u for u in users)  # only the owner gets their picture
+    assert env["call"]("patch", "/api/me", "u1", {"avatar": None}).json["avatar"] is None
+    log = env["call"]("get", "/api/admin/activity", "a1").json["entries"]
+    assert log[0]["action"] == "profile_update" and log[0]["before"]["name"] == "u1" and log[0]["after"]["name"] == "maria.s"
+
+
+@pytest.mark.parametrize("bad", [
+    {"name": "ab"}, {"name": "has space"}, {"name": 5}, {},
+    {"avatar": "data:image/svg+xml;base64," + _b64.b64encode(b"<svg/>").decode()},
+    {"avatar": "data:image/png;base64," + _b64.b64encode(b"<script>").decode()},
+    {"avatar": "https://example.com/me.png"},
+    {"avatar": "data:image/jpeg;base64," + _b64.b64encode(b"\xff\xd8\xff" + b"\x00" * 100_001).decode()},
+])
+def test_bad_profile_updates_rejected(env, bad):
+    assert env["call"]("patch", "/api/me", "u1", bad).status_code == 400
+    assert env["call"]("patch", "/api/me", None, {"name": "valid_name"}).status_code == 401

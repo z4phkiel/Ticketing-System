@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2563EB">
+  <script src="/js/theme.js"></script>
+  <title>Your profile · AI Support Desk</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/css/style.css">
+  <script type="module" src="/js/profile.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="/" id="home-link">
+      <svg aria-hidden="true"><use href="/icons/sprite.svg?v=4#logo"/></svg>
+      <span>AI Support Desk<small>Your account</small></span>
+    </a>
+    <div class="header-actions">
+      <button class="btn btn-secondary" id="install-btn" type="button" hidden>
+        <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=4#download"/></svg><span>Install app</span></button>
+      <div class="user-menu">
+        <button class="user-chip" id="user-chip" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu"></button>
+        <div class="menu" id="user-menu" role="menu" aria-label="Account"></div>
+      </div>
+      <button class="btn btn-ghost btn-icon" id="signout-btn" type="button" aria-label="Sign out" title="Sign out">
+        <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=4#logout"/></svg></button>
+    </div>
+  </header>
+
+  <main class="container narrow">
+    <div class="page-head">
+      <div>
+        <h1>Your profile</h1>
+        <p class="muted">Change your picture, username, and password.</p>
+      </div>
+      <a class="btn btn-secondary" href="/" id="back-link">Back</a>
+    </div>
+
+    <div class="profile-grid">
+      <section class="card card-pad" aria-labelledby="photo-title">
+        <h2 id="photo-title">Profile picture</h2>
+        <div class="avatar-row">
+          <span class="avatar xl" id="avatar-preview" aria-hidden="true"></span>
+          <div class="avatar-actions">
+            <button class="btn btn-secondary" id="photo-btn" type="button" data-needs-online>
+              <svg class="icon" aria-hidden="true"><use href="/icons/sprite.svg?v=4#image"/></svg><span>Upload photo</span></button>
+            <button class="btn btn-ghost" id="photo-remove" type="button" data-needs-online>Remove</button>
+            <input type="file" id="photo-input" accept="image/png,image/jpeg,image/webp" hidden>
+          </div>
+        </div>
+        <p class="muted small">JPEG, PNG, or WebP. It's cropped to a square and shown only to you, in the account menu.</p>
+      </section>
+
+      <section class="card card-pad" aria-labelledby="name-title">
+        <h2 id="name-title">Username</h2>
+        <form id="name-form" novalidate>
+          <div class="field">
+            <label for="name">Username</label>
+            <input class="input" id="name" name="username" autocomplete="username" maxlength="30" autocapitalize="none" spellcheck="false" required>
+            <div class="hint"><span>3-30 characters: letters, numbers, dots, dashes, or underscores.</span></div>
+          </div>
+          <p class="form-error" id="name-error" role="alert"></p>
+          <div class="form-actions"><button class="btn" id="name-save" type="submit" data-needs-online>Save username</button></div>
+        </form>
+      </section>
+
+      <section class="card card-pad" aria-labelledby="password-title">
+        <h2 id="password-title">Change password</h2>
+        <form id="password-form" novalidate>
+          <div class="field">
+            <label for="pw-current">Current password</label>
+            <input class="input" id="pw-current" type="password" autocomplete="current-password" required>
+          </div>
+          <div class="field">
+            <label for="pw-new">New password</label>
+            <input class="input" id="pw-new" type="password" autocomplete="new-password" minlength="6" required>
+            <div class="hint"><span>At least 6 characters.</span></div>
+          </div>
+          <div class="field">
+            <label for="pw-confirm">Confirm new password</label>
+            <input class="input" id="pw-confirm" type="password" autocomplete="new-password" minlength="6" required>
+          </div>
+          <p class="form-error" id="pw-error" role="alert"></p>
+          <div class="form-actions"><button class="btn" id="pw-save" type="submit" data-needs-online>Update password</button></div>
+        </form>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

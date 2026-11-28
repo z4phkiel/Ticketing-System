@@ -16,7 +16,7 @@
     ],
     "headers": [
       {
-        "regex": "^/(tickets|admin|offline)?$",
+        "regex": "^/(tickets|admin|profile|offline)?$",
         "headers": [
           {
             "key": "Cache-Control",

@@ -36,7 +36,7 @@ export function icon(name, cls = "icon") {
   svg.setAttribute("class", cls);
   svg.setAttribute("aria-hidden", "true");
   const use = document.createElementNS(ns, "use");
-  use.setAttribute("href", `/icons/sprite.svg?v=3#${name}`);
+  use.setAttribute("href", `/icons/sprite.svg?v=4#${name}`);
   svg.append(use);
   return svg;
 }
@@ -195,33 +195,94 @@ export function setupInstall() {
   });
 }
 
-/** Header user chip and sign-out. Clears in-memory data by leaving the page. */
-export function setupHeader(me) {
+/** Round avatar: the profile picture if one is set, otherwise the username's first letter. */
+export function avatarEl(u, cls = "") {
+  return h("span", { class: `avatar${cls ? ` ${cls}` : ""}`, "aria-hidden": "true" },
+    u?.avatar ? h("img", { src: u.avatar, alt: "" }) : displayName(u)[0].toUpperCase());
+}
+
+/** Header account button (avatar + username). Call again after the profile changes. */
+export function renderUserChip(me) {
   const chip = $("#user-chip");
-  if (chip && (me?.name || me?.email)) {
-    const name = displayName(me);
-    chip.replaceChildren(
-      h("span", { class: "avatar", "aria-hidden": "true" }, name[0].toUpperCase()),
-      h("span", {}, name),
-    );
-  }
-  $("#signout-btn")?.addEventListener("click", async () => {
-    const name = displayName(me);
-    const choice = await choose({
-      lead: h("div", { class: "sheet-user" },
-        h("span", { class: "avatar", "aria-hidden": "true" }, name[0].toUpperCase()),
-        h("span", {}, h("strong", {}, name), h("small", {}, me?.role === "admin" ? "IT staff" : "Signed in"))),
-      title: "Sign out?",
-      text: `You'll need to sign in again to see ${me?.role === "admin" ? "the support queue" : "your tickets"}. Anything you haven't sent will be lost.`,
-      buttons: [
-        { label: "Sign out", value: "signout", icon: "logout", autofocus: true },
-        { label: "Cancel", value: "", cls: "btn-ghost" },
-      ],
+  if (!chip || !(me?.name || me?.email)) return;
+  chip.replaceChildren(avatarEl(me), h("span", { class: "chip-name" }, displayName(me)), icon("chevron", "icon icon-sm chevron"));
+  chip.setAttribute("aria-label", `Account menu for ${displayName(me)}`);
+}
+
+/** Account dropdown: Profile, Dark mode, Sign out. Rebuilt on each open so it shows current details. */
+function setupUserMenu(me) {
+  const chip = $("#user-chip"), menu = $("#user-menu");
+  if (!chip || !menu) return;
+  const items = () => [...menu.querySelectorAll('[role^="menuitem"]')];
+  const close = (refocus = false) => {
+    menu.classList.remove("open");
+    chip.setAttribute("aria-expanded", "false");
+    if (refocus) chip.focus();
+  };
+  const build = () => {
+    const theme = h("button", { class: "menu-item", type: "button", role: "menuitemcheckbox",
+      "aria-checked": String(document.documentElement.dataset.theme === "dark") },
+    icon("moon"), "Dark mode", h("span", { class: "switch", "aria-hidden": "true" }));
+    theme.addEventListener("click", () => {
+      const dark = theme.getAttribute("aria-checked") !== "true";
+      theme.setAttribute("aria-checked", String(dark));
+      const apply = () => window.setTheme?.(dark);
+      document.startViewTransition ? document.startViewTransition(apply) : apply(); // cross-fade the whole page
     });
-    if (choice !== "signout") return;
-    await signOut(auth);
-    location.replace("/");
+    const signOutItem = h("button", { class: "menu-item", type: "button", role: "menuitem" }, icon("logout"), "Sign out");
+    signOutItem.addEventListener("click", () => { close(); confirmSignOut(me); });
+    menu.replaceChildren(
+      h("div", { class: "menu-head" }, avatarEl(me),
+        h("span", {}, h("strong", {}, displayName(me)), h("small", {}, me?.role === "admin" ? "IT staff" : "User"))),
+      h("a", { class: "menu-item", role: "menuitem", href: "/profile", "aria-current": location.pathname === "/profile" ? "page" : null },
+        icon("user"), "Profile"),
+      theme,
+      h("hr"),
+      signOutItem);
+  };
+  chip.addEventListener("click", () => {
+    if (menu.classList.contains("open")) return close();
+    build();
+    menu.classList.add("open");
+    chip.setAttribute("aria-expanded", "true");
+    items()[0]?.focus();
   });
+  chip.parentElement.addEventListener("keydown", e => { // covers the button and the menu
+    if (!menu.classList.contains("open")) return;
+    const list = items(), i = list.indexOf(document.activeElement);
+    if (e.key === "Escape") { e.preventDefault(); close(true); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      list[(i + (e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length].focus();
+    } else if (e.key === "Tab") close();
+  });
+  document.addEventListener("pointerdown", e => {
+    if (menu.classList.contains("open") && !menu.contains(e.target) && !chip.contains(e.target)) close();
+  });
+}
+
+/** Header account menu and sign-out. Signing out clears in-memory data by leaving the page. */
+export function setupHeader(me) {
+  renderUserChip(me);
+  setupUserMenu(me);
+  $("#signout-btn")?.addEventListener("click", () => confirmSignOut(me));
+}
+
+async function confirmSignOut(me) {
+  const name = displayName(me);
+  const choice = await choose({
+    lead: h("div", { class: "sheet-user" }, avatarEl(me),
+      h("span", {}, h("strong", {}, name), h("small", {}, me?.role === "admin" ? "IT staff" : "Signed in"))),
+    title: "Sign out?",
+    text: `You'll need to sign in again to see ${me?.role === "admin" ? "the support queue" : "your tickets"}. Anything you haven't sent will be lost.`,
+    buttons: [
+      { label: "Sign out", value: "signout", icon: "logout", autofocus: true },
+      { label: "Cancel", value: "", cls: "btn-ghost" },
+    ],
+  });
+  if (choice !== "signout") return;
+  await signOut(auth);
+  location.replace("/");
 }
 
 export function initShell() {

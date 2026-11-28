@@ -9,6 +9,11 @@ from werkzeug.exceptions import HTTPException
 import service
 from ai_service import AIService
 from auth import firebase_verifier, forget_user, role_required
+
+
+def _me(u):
+    return {"uid": u["uid"], "email": u.get("email"), "name": u.get("name"), "role": u.get("role"),
+            "avatar": u.get("avatar")}
 from config import Settings
 from repo import make_repo, now_iso
 
@@ -113,8 +118,15 @@ def register_routes(app):
     @app.get("/api/me")
     @role_required()
     def me():
-        u = g.user
-        return {"uid": u["uid"], "email": u.get("email"), "name": u.get("name"), "role": u.get("role")}
+        return _me(g.user)
+
+    @app.patch("/api/me")
+    @role_required()
+    def update_me():
+        """Profile page: change your username and profile picture. Passwords are changed with Firebase Auth."""
+        u = service.update_profile(_repo(), g.user, _json())
+        forget_user(u["uid"])  # drop the cached profile so the change shows on the next request
+        return _me(u)
 
     @app.post("/api/tickets")
     @role_required("user", "admin")
@@ -232,11 +244,11 @@ def register_routes(app):
     @role_required("admin")
     def admin_users():
         users = sorted(_repo().list_users(), key=lambda u: (u.get("role") != "admin", u.get("email", "")))
-        return {"users": users}
+        return {"users": [service.public_user(u) for u in users]}
 
     @app.patch("/api/admin/users/<uid>")
     @role_required("admin")
     def admin_set_role(uid):
         user = service.set_role(_repo(), g.user, uid, _json().get("role"))
         forget_user(uid)  # apply the new role on their next request
-        return {"user": user}
+        return {"user": service.public_user(user)}
